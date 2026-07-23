@@ -1,5 +1,7 @@
 # 🛡️ Tether Isolator
 
+🇬🇧 [English version](README.en.md) | 🇹🇷 Türkçe (bu sayfa)
+
 Belirli uygulamaları, **host'un kablolu bağlantısından yapısal olarak izole**
 bir ağ alanında, yalnızca seçtiğiniz bir uplink (telefon USB tether / WiFi)
 üzerinden çalıştıran araç. Apple-esinli bir web paneli, otomatik yeniden
