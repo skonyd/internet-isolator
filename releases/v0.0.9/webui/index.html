@@ -1,0 +1,148 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Tether Isolator</title>
+  <link rel="stylesheet" href="/style.css">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E🛡️%3C/text%3E%3C/svg%3E">
+</head>
+<body data-phase="idle">
+  <div class="titlebar">
+    <div class="brand">
+      <span class="logo">🛡️</span>
+      <div>
+        <h1>Tether Isolator</h1>
+        <p class="subtitle">İzole ağ alanı yöneticisi</p>
+      </div>
+    </div>
+    <div class="env-badges">
+      <span id="rootBadge" class="badge">—</span>
+      <span id="versionBadge" class="badge ghost">v—</span>
+      <button id="quitBtn" class="quit-btn" title="Uygulamayı kapat">Çıkış</button>
+    </div>
+  </div>
+
+  <main>
+    <!-- DURUM KAHRAMAN KARTI -->
+    <section class="card hero" id="heroCard">
+      <div class="hero-status">
+        <span class="dot" id="statusDot"></span>
+        <div>
+          <h2 id="phaseText">Boşta</h2>
+          <p id="phaseHint" class="muted">Bir oturum başlatın.</p>
+        </div>
+      </div>
+      <div class="hero-metrics">
+        <div class="metric"><label>Dış IP (izole)</label><b id="mPublicIp">—</b></div>
+        <div class="metric"><label>İç IP</label><b id="mIp">—</b></div>
+        <div class="metric"><label>Yeniden bağlanma</label><b id="mReconnect">0</b></div>
+        <div class="metric"><label>Uygulama</label><b id="mApps">0</b></div>
+      </div>
+    </section>
+
+    <div class="grid">
+      <!-- KONTROL KARTI -->
+      <section class="card" id="controlCard">
+        <h3>Oturum</h3>
+
+        <label class="field-label">Profil</label>
+        <div class="select-wrap">
+          <select id="profileSelect"></select>
+        </div>
+
+        <label class="field-label">Uplink (izole bağlantı)</label>
+        <div id="uplinkList" class="chip-list"></div>
+
+        <div id="wifiCreds" class="wifi-creds" hidden>
+          <label class="field-label">WiFi ağı (SSID)</label>
+          <input type="text" id="wifiSsid" class="text-input" placeholder="Ağ adı" autocomplete="off" spellcheck="false">
+          <label class="field-label">WiFi parolası</label>
+          <input type="password" id="wifiPassword" class="text-input" placeholder="Parola (boş = kayıtlıyı kullan)" autocomplete="off">
+          <p class="muted hint-sm">Parola yalnızca bu cihazda saklanır (config.json, düz metin).</p>
+        </div>
+
+        <label class="field-label">Başlatılacak uygulamalar</label>
+        <div id="appList" class="chip-list"></div>
+
+        <label class="checkbox-row">
+          <input type="checkbox" id="useSystemProfile">
+          <span>Mevcut tarayıcı profilini kullan <em>(girişler/oturumlar korunur)</em></span>
+        </label>
+        <p class="muted hint-sm">Açıksa o tarayıcı host'ta kapalı olmalı; aksi halde izolasyon delinmemesi için başlatma reddedilir.</p>
+
+        <div class="actions">
+          <button id="startBtn" class="btn primary">Başlat</button>
+          <button id="switchBtn" class="btn primary" hidden disabled>↪ Bu uplink'e geç</button>
+          <button id="stopBtn" class="btn danger" disabled>Durdur</button>
+        </div>
+        <p class="muted hint-sm" id="switchHint" hidden>Oturum açıkken farklı bir uplink seçip
+          "geç" dersen uygulamalar kapanmadan yeni bağlantıya taşınır.</p>
+      </section>
+
+      <!-- BAĞLANTI & RELAY -->
+      <section class="card" id="connCard">
+        <h3>Bağlantı</h3>
+        <dl class="detail">
+          <div><dt>Ağ alanı</dt><dd id="dNamespace">—</dd></div>
+          <div><dt>Uplink durumu</dt><dd id="dUplink">—</dd></div>
+          <div><dt>Ağ geçidi</dt><dd id="dGateway">—</dd></div>
+          <div><dt>İnternet</dt><dd id="dOnline">—</dd></div>
+        </dl>
+
+        <button id="reconnectBtn" class="btn ghost-btn" disabled>↻ Yeniden Bağlan</button>
+
+        <div class="relay-box">
+          <div class="relay-head">
+            <div>
+              <h4>Relay (kurum ağı erişimi)</h4>
+              <p class="muted" id="relayHint">Kapalıyken tam izole.</p>
+            </div>
+            <label class="switch">
+              <input type="checkbox" id="relayToggle" disabled>
+              <span class="slider"></span>
+            </label>
+          </div>
+          <p class="muted hint-sm" style="margin-top:12px">Açıldığında izole alandaki uygulamalar, bu bilgisayarın <b>ethernet/yerel ağı üzerinden ulaştığı her yere</b> erişir (kurum sunucuları vb.). <b>İnternet değişmez</b> — izole alanın tether/WiFi bağlantısında kalır. Açınca aynalanan ağlar aşağıda listelenir.</p>
+          <label class="field-label" style="margin-top:12px">Ek hedefler (opsiyonel, virgülle)</label>
+          <input type="text" id="relayExtra" class="text-input"
+                 placeholder="ör. mail.havelsan.com.tr, 195.214.160.160" autocomplete="off" spellcheck="false">
+          <p class="muted hint-sm">Kurum çıkışından erişilen ama tether'den engelli dış adresler/siteler. Bunlar da host üzerinden (kurum ağından) geçirilir. IP, CIDR veya alan adı yazabilirsin.</p>
+          <p class="muted hint-sm" id="relayRoutes"></p>
+        </div>
+
+        <div class="relay-box">
+          <div class="relay-head">
+            <div>
+              <h4>VPN (izole alan içinden)</h4>
+              <p class="muted" id="vpnHint">Kapalı. .ovpn ile uzak ağa bağlan.</p>
+            </div>
+            <label class="switch">
+              <input type="checkbox" id="vpnToggle" disabled>
+              <span class="slider"></span>
+            </label>
+          </div>
+          <label class="field-label" style="margin-top:14px">OpenVPN yapılandırması (.ovpn yolu)</label>
+          <input type="text" id="vpnConfig" class="text-input"
+                 placeholder="/home/user/Downloads/garagelimanv2-alorak (1).ovpn"
+                 autocomplete="off" spellcheck="false">
+          <p class="muted hint-sm">İzole alanın uplink'i (tether) üzerinden bağlanır; relay ile aynı anda açık olabilir. Parolalı .ovpn için parolayı bir dosyaya siz koymalısınız.</p>
+        </div>
+      </section>
+    </div>
+
+    <!-- OLAY GÜNLÜĞÜ -->
+    <section class="card">
+      <h3>Olay akışı</h3>
+      <div id="eventLog" class="event-log"><p class="muted">Henüz olay yok.</p></div>
+    </section>
+  </main>
+
+  <footer>
+    <span id="connState" class="conn-state">● daemon'a bağlanılıyor…</span>
+    <span class="dim">Tether Isolator — yapısal izolasyon (Model B) + denetimli relay</span>
+  </footer>
+
+  <script src="/app.js"></script>
+</body>
+</html>

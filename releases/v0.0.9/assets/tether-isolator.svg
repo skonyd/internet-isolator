@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256">
+  <defs>
+    <linearGradient id="g" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#3aa0ff"/>
+      <stop offset="1" stop-color="#0067d6"/>
+    </linearGradient>
+  </defs>
+  <rect width="256" height="256" rx="56" fill="url(#g)"/>
+  <!-- kalkan -->
+  <path d="M128 40 196 66 V128 C196 172 166 200 128 216 C90 200 60 172 60 128 V66 Z"
+        fill="#fff" fill-opacity="0.16" stroke="#fff" stroke-width="6"/>
+  <!-- izole düğümler + bağlantı -->
+  <circle cx="128" cy="96" r="14" fill="#fff"/>
+  <circle cx="98"  cy="150" r="11" fill="#fff" fill-opacity="0.9"/>
+  <circle cx="158" cy="150" r="11" fill="#fff" fill-opacity="0.9"/>
+  <path d="M128 110 V134 M118 142 L106 150 M138 142 L150 150"
+        stroke="#fff" stroke-width="6" stroke-linecap="round" fill="none"/>
+</svg>

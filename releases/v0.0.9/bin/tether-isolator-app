@@ -1,0 +1,76 @@
+#!/usr/bin/env bash
+# ─────────────────────────────────────────────────────────────────────────────
+#  Tether Isolator — çift tıklanan masaüstü başlatıcısı
+#
+#  Akış:
+#    1. Panel zaten açıksa yalnızca tarayıcıda açar.
+#    2. Değilse pkexec ile (grafik parola penceresi) daemon'u root olarak,
+#       GUI ortamını (DISPLAY/XAUTHORITY) içeri taşıyarak ARKA PLANDA başlatır;
+#       çıktıyı bir log dosyasına yazar.
+#    3. Port hazır olana kadar BEKLER, ANCAK ONDAN SONRA tarayıcıyı açar.
+#       (Böylece parola yazılırken tarayıcı boş/başarısız açılmaz.)
+#
+#  Kapatma: panel arayüzündeki "Çıkış" düğmesi.
+#  Tanılama: sorun olursa log yolu bir bildirimle gösterilir.
+# ─────────────────────────────────────────────────────────────────────────────
+set -uo pipefail
+
+REPO_ROOT="$(cd "$(dirname "$(readlink -f "$0")")/.." && pwd)"
+HOST="127.0.0.1"
+PORT="8787"
+URL="http://${HOST}:${PORT}/"
+LOG="${XDG_RUNTIME_DIR:-/tmp}/tether-isolator.log"
+
+note() {  # masaüstü bildirimi (varsa) + stderr
+  command -v notify-send >/dev/null 2>&1 && notify-send "Tether Isolator" "$1" || true
+  echo "Tether Isolator: $1" >&2
+}
+
+open_browser() {
+  if   command -v xdg-open >/dev/null 2>&1; then xdg-open "$URL" >/dev/null 2>&1 &
+  elif command -v gio      >/dev/null 2>&1; then gio open "$URL" >/dev/null 2>&1 &
+  else note "Tarayıcıyı elle açın: $URL"; fi
+}
+
+panel_up() { curl -s -o /dev/null --max-time 1 "$URL" 2>/dev/null; }
+
+# 1) Zaten çalışıyor mu?
+if panel_up; then
+  open_browser
+  exit 0
+fi
+
+# 2) Yetki yükseltici seç
+if command -v pkexec >/dev/null 2>&1 && [ -n "${DISPLAY:-}${WAYLAND_DISPLAY:-}" ]; then
+  ELEVATE=(pkexec)
+else
+  ELEVATE=(sudo)
+fi
+
+# 3) Daemon'u arka planda başlat (çıktı log dosyasına)
+: > "$LOG" 2>/dev/null || LOG="/tmp/tether-isolator.$USER.log"
+"${ELEVATE[@]}" env \
+  DISPLAY="${DISPLAY:-}" \
+  WAYLAND_DISPLAY="${WAYLAND_DISPLAY:-}" \
+  XAUTHORITY="${XAUTHORITY:-$HOME/.Xauthority}" \
+  XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-}" \
+  PYTHONPATH="$REPO_ROOT" \
+  python3 -m tether_isolator gui --no-browser >>"$LOG" 2>&1 &
+DPID=$!
+
+# 4) Port hazır olana kadar bekle (parola girişi için ~90sn pay)
+for _ in $(seq 1 180); do
+  if panel_up; then
+    open_browser
+    wait "$DPID"          # panel "Çıkış" diyene kadar canlı tut
+    exit 0
+  fi
+  if ! kill -0 "$DPID" 2>/dev/null; then
+    note "Başlatılamadı (parola iptal edildi mi?). Günlük: $LOG"
+    exit 1
+  fi
+  sleep 0.5
+done
+
+note "Zaman aşımı — panel açılmadı. Günlük: $LOG"
+exit 1

@@ -1,0 +1,221 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Tether Isolator</title>
+  <link rel="stylesheet" href="/style.css">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E🛡️%3C/text%3E%3C/svg%3E">
+</head>
+<body data-phase="idle" data-theme="auto">
+
+  <!-- TOAST BİLDİRİM (U-11) -->
+  <div id="toastContainer" class="toast-container"></div>
+
+  <!-- KOMUT PALETİ (U-13) -->
+  <div id="commandPalette" class="command-palette" hidden>
+    <div class="cp-overlay" onclick="closePalette()"></div>
+    <div class="cp-box">
+      <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--line); padding-bottom: 8px; margin-bottom: 8px;">
+        <span class="muted" style="font-size: 12px; font-weight: 500;">KOMUT PALETİ</span>
+        <button onclick="closePalette()" class="btn ghost-btn btn-sm" style="padding: 2px 8px; font-size: 12px;">✕ Kapat (Esc)</button>
+      </div>
+      <input type="text" id="cpInput" class="cp-input" placeholder="Komut ara…" autocomplete="new-password" spellcheck="false" name="random_search_field">
+      <div id="cpResults" class="cp-results"></div>
+    </div>
+  </div>
+
+  <!-- UYGULAMA EKLE -->
+  <div id="appPicker" class="command-palette" hidden>
+    <div class="cp-overlay" onclick="closeAppPicker()"></div>
+    <div class="cp-box">
+      <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--line); padding-bottom: 8px; margin-bottom: 8px;">
+        <span class="muted" style="font-size: 12px; font-weight: 500;">UYGULAMA EKLE</span>
+        <button onclick="closeAppPicker()" class="btn ghost-btn btn-sm" style="padding: 2px 8px; font-size: 12px;">✕ Kapat (Esc)</button>
+      </div>
+      <input type="text" id="appPickerSearch" class="cp-input" placeholder="Kurulu uygulamalarda ara…" autocomplete="off" spellcheck="false">
+      <div id="appPickerResults" class="cp-results"></div>
+      <div style="border-top: 1px solid var(--line); padding: 12px 20px;">
+        <p class="muted hint-sm" style="margin-bottom:8px">Listede yoksa .desktop dosyası seç ya da elle ekle:</p>
+        <button id="appPickerFileBtn" class="btn ghost-btn btn-sm" type="button">.desktop dosyası seç…</button>
+        <input type="file" id="appFileInput" accept=".desktop" style="display:none">
+        <div style="display:flex; gap:8px; margin-top:10px; flex-wrap:wrap">
+          <input type="text" id="manualAppName" class="text-input" placeholder="Görünen ad (opsiyonel)" style="flex:1; min-width:120px" autocomplete="off">
+          <input type="text" id="manualAppCommand" class="text-input" placeholder="Komut, ör: /opt/app/run --flag" style="flex:2; min-width:180px" autocomplete="off" spellcheck="false">
+          <button id="manualAppAddBtn" class="btn ghost-btn btn-sm" type="button">Ekle</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="titlebar">
+    <div class="brand">
+      <span class="logo">🛡️</span>
+      <div>
+        <h1>Tether Isolator</h1>
+        <p class="subtitle">İzole ağ alanı yöneticisi</p>
+      </div>
+    </div>
+    <div class="env-badges">
+      <span id="rootBadge" class="badge">—</span>
+      <span id="versionBadge" class="badge ghost">v—</span>
+      <button id="themeToggle" class="theme-btn" title="Temayı değiştir (U-15)">🌓</button>
+      <button id="quitBtn" class="quit-btn" title="Uygulamayı kapat">Çıkış</button>
+    </div>
+  </div>
+
+  <main>
+    <!-- DURUM KAHRAMAN KARTI -->
+    <section class="card hero" id="heroCard">
+      <div class="hero-status">
+        <span class="dot" id="statusDot"></span>
+        <div>
+          <h2 id="phaseText">Boşta</h2>
+          <p id="phaseHint" class="muted">Bir oturum başlatın.</p>
+        </div>
+      </div>
+      <!-- İZOLASYON KANITI (U-3) -->
+      <div id="trustBadge" class="trust-badge" hidden>
+        <span class="trust-icon">✅</span>
+        <span class="trust-text" id="trustText">İzole — işin PC'nin hattından çıkmıyor</span>
+        <span class="trust-detail" id="trustDetail"></span>
+      </div>
+      <div class="hero-metrics">
+        <div class="metric"><label>Dış IP (izole)</label><b id="mPublicIp">—</b></div>
+        <div class="metric"><label>İç IP</label><b id="mIp">—</b></div>
+        <div class="metric"><label>Yeniden bağlanma</label><b id="mReconnect">0</b></div>
+        <div class="metric"><label>Uygulama</label><b id="mApps">0</b></div>
+        <div class="metric" id="trafficMetric" hidden><label>Veri (oturum)</label><b id="mTraffic">—</b></div>
+      </div>
+    </section>
+
+    <div class="grid">
+      <!-- KONTROL KARTI -->
+      <section class="card" id="controlCard">
+        <h3>Oturum</h3>
+
+        <label class="field-label">Profil</label>
+        <div class="select-wrap">
+          <select id="profileSelect"></select>
+        </div>
+
+        <div style="display:flex; align-items:center; justify-content:space-between; gap:8px; margin-bottom:8px">
+          <label class="field-label" style="margin:0">Uplink (izole bağlantı)</label>
+          <button id="uplinkRefreshBtn" class="icon-refresh-btn" type="button" title="Listeyi yenile">↻</button>
+        </div>
+        <div id="uplinkList" class="chip-list"></div>
+
+        <div id="wifiCreds" class="wifi-creds" hidden>
+          <label class="field-label">WiFi ağı (SSID)</label>
+          <input type="text" id="wifiSsid" class="text-input" placeholder="Ağ adı" autocomplete="off" spellcheck="false">
+          <label class="field-label">WiFi parolası</label>
+          <input type="password" id="wifiPassword" class="text-input" placeholder="Parola (boş = kayıtlıyı kullan)" autocomplete="off">
+          <p class="muted hint-sm">Parola yalnızca bu cihazda saklanır.</p>
+        </div>
+
+        <label class="field-label">Başlatılacak uygulamalar</label>
+        <div id="appList" class="chip-list"></div>
+
+        <div class="app-list-actions" style="margin-top:6px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+          <button id="addAppBtn" class="btn ghost-btn btn-sm" type="button">+ Uygulama Ekle</button>
+        </div>
+
+        <label class="checkbox-row">
+          <input type="checkbox" id="useSystemProfile">
+          <span>Mevcut tarayıcı profilini kullan <em>(girişler/oturumlar korunur)</em></span>
+        </label>
+        <p class="muted hint-sm">Açıksa o tarayıcı host'ta kapalı olmalı; aksi halde izolasyon delinmemesi için başlatma reddedilir.</p>
+
+        <div class="import-profile-row" style="margin-top:10px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+          <div class="select-wrap" style="flex:1;min-width:140px">
+            <select id="importAppSelect"></select>
+          </div>
+          <button id="importProfileBtn" class="btn ghost-btn" type="button">Eski profili içe aktar</button>
+        </div>
+        <p class="muted hint-sm">Daha önce (izolasyon dışında ya da eski bir sürümde) girdiğin şifre/oturumları
+          izole profile bir kerelik kopyalar. Seçili uygulamanın TÜM pencereleri (host + izole) kapalı olmalı;
+          mevcut izole profil silinmez, yedeklenir.</p>
+
+        <div class="actions">
+          <button id="startBtn" class="btn primary">Başlat</button>
+          <button id="switchBtn" class="btn primary" hidden disabled>↪ Bu uplink'e geç</button>
+          <button id="stopBtn" class="btn danger" disabled>Durdur</button>
+        </div>
+        <p class="muted hint-sm" id="switchHint" hidden>Oturum açıkken farklı bir uplink seçip
+          "geç" dersen uygulamalar kapanmadan yeni bağlantıya taşınır.</p>
+      </section>
+
+      <!-- BAĞLANTI & RELAY -->
+      <section class="card" id="connCard">
+        <h3>Bağlantı</h3>
+        <dl class="detail">
+          <div><dt>Ağ alanı</dt><dd id="dNamespace">—</dd></div>
+          <div><dt>Uplink durumu</dt><dd id="dUplink">—</dd></div>
+          <div><dt>Ağ geçidi</dt><dd id="dGateway">—</dd></div>
+          <div><dt>İnternet</dt><dd id="dOnline">—</dd></div>
+        </dl>
+
+        <button id="reconnectBtn" class="btn ghost-btn" disabled>↻ Yeniden Bağlan</button>
+
+        <!-- HIZ TESTİ (U-7) -->
+        <button id="speedTestBtn" class="btn ghost-btn" disabled>⚡ Hız testi</button>
+        <div id="speedTestResult" class="speed-test-result" hidden></div>
+
+        <div class="relay-box">
+          <div class="relay-head">
+            <div>
+              <h4>Relay (kurum ağı erişimi)</h4>
+              <p class="muted" id="relayHint">Kapalıyken tam izole.</p>
+            </div>
+            <label class="switch">
+              <input type="checkbox" id="relayToggle" disabled>
+              <span class="slider"></span>
+            </label>
+          </div>
+          <p class="muted hint-sm" style="margin-top:12px">Açıldığında izole alandaki uygulamalar, bu bilgisayarın <b>ethernet/yerel ağı üzerinden ulaştığı her yere</b> erişir. <b>İnternet değişmez</b> — izole alanın tether/WiFi bağlantısında kalır.</p>
+          <label class="field-label" style="margin-top:12px">Ek hedefler (opsiyonel, virgülle)</label>
+          <input type="text" id="relayExtra" class="text-input"
+                 placeholder="ör. mail.havelsan.com.tr, 195.214.160.160" autocomplete="off" spellcheck="false">
+          <p class="muted hint-sm" id="relayRoutes"></p>
+        </div>
+
+        <div class="relay-box vpn-box">
+          <div class="relay-head">
+            <div>
+              <h4>VPN Bağlantıları</h4>
+              <p class="muted">İzole alan içinden şifreli tüneller.</p>
+            </div>
+          </div>
+          <div id="vpnList" class="vpn-list">
+            <p class="muted hint-sm">Yükleniyor...</p>
+          </div>
+          
+          <div style="margin-top: 12px;">
+            <button id="addVpnBtn" class="btn ghost-btn btn-sm" disabled>+ VPN İçe Aktar (.ovpn)</button>
+            <input type="file" id="vpnFileInput" accept=".ovpn" style="display:none">
+          </div>
+          <p class="muted hint-sm" style="margin-top:8px">İzole alanın uplink'i üzerinden bağlanır; birden fazla tünel eşzamanlı açık olabilir.</p>
+        </div>
+      </section>
+    </div>
+
+    <!-- OLAY GÜNLÜĞÜ -->
+    <section class="card">
+      <h3>Olay akışı <span class="event-filters" id="eventFilters">
+        <button class="filter-chip active" data-filter="all">Tümü</button>
+        <button class="filter-chip" data-filter="ok">✓</button>
+        <button class="filter-chip" data-filter="warn">⚠</button>
+        <button class="filter-chip" data-filter="error">✕</button>
+      </span></h3>
+      <div id="eventLog" class="event-log"><p class="muted">Henüz olay yok.</p></div>
+    </section>
+  </main>
+
+  <footer>
+    <span id="connState" class="conn-state">● daemon'a bağlanılıyor…</span>
+    <span class="dim">Tether Isolator — yapısal izolasyon (Model B) + denetimli relay</span>
+  </footer>
+
+  <script src="/app.js"></script>
+</body>
+</html>

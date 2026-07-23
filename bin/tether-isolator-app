@@ -1,0 +1,100 @@
+#!/usr/bin/env bash
+# ─────────────────────────────────────────────────────────────────────────────
+#  Tether Isolator — çift tıklanan masaüstü başlatıcısı
+#
+#  Akış:
+#    1. Panel zaten açıksa yalnızca tarayıcıda açar.
+#    2. Değilse pkexec ile (grafik parola penceresi) daemon'u root olarak,
+#       GUI ortamını (DISPLAY/XAUTHORITY) içeri taşıyarak ARKA PLANDA başlatır;
+#       çıktıyı bir log dosyasına yazar.
+#    3. Port hazır olana kadar BEKLER, ANCAK ONDAN SONRA tarayıcıyı açar.
+#       (Böylece parola yazılırken tarayıcı boş/başarısız açılmaz.)
+#
+#  Kapatma: panel arayüzündeki "Çıkış" düğmesi.
+#  Tanılama: sorun olursa log yolu bir bildirimle gösterilir.
+# ─────────────────────────────────────────────────────────────────────────────
+set -uo pipefail
+
+REPO_ROOT="$(cd "$(dirname "$(readlink -f "$0")")/.." && pwd)"
+HOST="127.0.0.1"
+# Portu config.json'dan oku (varsayılan 8787). Daemon portu buradan aldığı için
+# başlatıcının da aynı portu kullanması şart; aksi halde tarayıcı yanlış porta
+# açılır ve panel/uplink boş görünür (config 8795 iken başlatıcı 8787'ye bakması gibi).
+CONFIG_JSON="${XDG_CONFIG_HOME:-$HOME/.config}/tether-isolator/config.json"
+PORT="$(python3 -c "import json,sys;print(json.load(open(sys.argv[1])).get('http_port',8787))" "$CONFIG_JSON" 2>/dev/null || echo 8787)"
+[ -n "$PORT" ] || PORT="8787"
+URL="http://${HOST}:${PORT}/"
+TOKEN_FILE="/run/tether-isolator/api.token"
+LOG="${XDG_RUNTIME_DIR:-/tmp}/tether-isolator.log"
+
+note() {  # masaüstü bildirimi (varsa) + stderr
+  command -v notify-send >/dev/null 2>&1 && notify-send "Tether Isolator" "$1" || true
+  echo "Tether Isolator: $1" >&2
+}
+
+# Panel URL'sini API token'ıyla birlikte üretir. Daemon token'ı root olarak
+# /run/tether-isolator/api.token'a yazıp masaüstü kullanıcısına devreder (0600).
+# Token olmadan panelin API çağrıları 401 döner ve arayüz (uplink vb.) boş kalır.
+panel_url() {
+  local tok=""
+  [ -r "$TOKEN_FILE" ] && tok="$(tr -d '[:space:]' < "$TOKEN_FILE" 2>/dev/null)"
+  if [ -n "$tok" ]; then echo "${URL}#token=${tok}"; else echo "$URL"; fi
+}
+
+open_browser() {
+  local u; u="$(panel_url)"
+  if   command -v xdg-open >/dev/null 2>&1; then xdg-open "$u" >/dev/null 2>&1 &
+  elif command -v gio      >/dev/null 2>&1; then gio open "$u" >/dev/null 2>&1 &
+  else note "Tarayıcıyı elle açın: $u"; fi
+}
+
+panel_up() { curl -s -o /dev/null --max-time 1 "$URL" 2>/dev/null; }
+
+# 1) Zaten çalışıyor mu?
+if panel_up; then
+  open_browser
+  exit 0
+fi
+
+# 2) Yetki yükseltici seç
+if command -v pkexec >/dev/null 2>&1 && [ -n "${DISPLAY:-}${WAYLAND_DISPLAY:-}" ]; then
+  ELEVATE=(pkexec)
+else
+  ELEVATE=(sudo)
+fi
+
+# 3) Daemon'u arka planda başlat (çıktı log dosyasına)
+#    Buraya geldiysek panel doğru portta yanıt VERMİYOR → sağlıklı bir oturum yok.
+#    Yeni daemon başlar; namespace + uygulamalar yaşadığı için oturumu DEVRALIR
+#    (adopt_if_running). Not: burada eski süreci pattern ile pkill ETMEYİZ — pkexec
+#    sarmalayıcısının kendi komut satırı da "tether_isolator gui" içerdiğinden böyle
+#    bir pkill sarmalayıcıyı da öldürür ("parola iptal edildi mi?" hatasına yol açar).
+#    Takılı bir eski daemon'u elle temizlemek için: sudo pkill -f 'tether_isolator gui'
+: > "$LOG" 2>/dev/null || LOG="/tmp/tether-isolator.$USER.log"
+"${ELEVATE[@]}" env \
+  DISPLAY="${DISPLAY:-}" \
+  WAYLAND_DISPLAY="${WAYLAND_DISPLAY:-}" \
+  XAUTHORITY="${XAUTHORITY:-$HOME/.Xauthority}" \
+  XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-}" \
+  DBUS_SESSION_BUS_ADDRESS="${DBUS_SESSION_BUS_ADDRESS:-unix:path=${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/bus}" \
+  PYTHONPATH="$REPO_ROOT" \
+  python3 -m tether_isolator gui --no-browser >>"$LOG" 2>&1 &
+DPID=$!
+
+# 4) Port hazır olana kadar bekle (parola girişi için ~90sn pay)
+for _ in $(seq 1 180); do
+  if panel_up; then
+    open_browser
+    wait "$DPID"          # panel "Çıkış" diyene kadar canlı tut
+    exit 0
+  fi
+  if ! kill -0 "$DPID" 2>/dev/null; then
+    last="$(tail -n 2 "$LOG" 2>/dev/null | tr '\n' ' ')"
+    note "Başlatılamadı. Son günlük: ${last:-yok}  (tam günlük: $LOG)"
+    exit 1
+  fi
+  sleep 0.5
+done
+
+note "Zaman aşımı — panel açılmadı. Günlük: $LOG"
+exit 1

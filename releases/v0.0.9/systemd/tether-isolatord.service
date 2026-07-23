@@ -1,0 +1,20 @@
+[Unit]
+Description=Tether Isolator daemon (izole ağ alanı + web paneli)
+Documentation=file:///opt/tether-isolator/README.md
+After=network.target
+
+[Service]
+Type=simple
+# Repo yolunu kurulumunuza göre düzenleyin:
+Environment=PYTHONPATH=/opt/tether-isolator
+ExecStart=/usr/bin/python3 -m tether_isolator gui --no-browser
+# Ağ namespace işlemleri root gerektirir:
+User=root
+Restart=on-failure
+RestartSec=3
+# Güvenlik sınırlamaları (namespace işlemleri için gerekli yetenekler korunur)
+AmbientCapabilities=CAP_NET_ADMIN CAP_SYS_ADMIN
+NoNewPrivileges=no
+
+[Install]
+WantedBy=multi-user.target
