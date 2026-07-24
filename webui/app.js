@@ -231,6 +231,9 @@ function closeAppPicker() {
   $("appPicker").hidden = true;
 }
 
+$("appPickerCloseBtn").addEventListener("click", closeAppPicker);
+$("appPickerOverlay").addEventListener("click", closeAppPicker);
+
 async function openAppPicker() {
   $("appPicker").hidden = false;
   $("appPickerSearch").value = "";
@@ -814,6 +817,9 @@ function togglePalette() {
 function closePalette() {
   $("commandPalette").hidden = true;
 }
+
+$("commandPaletteCloseBtn").addEventListener("click", closePalette);
+$("commandPaletteOverlay").addEventListener("click", closePalette);
 
 function filterPalette(query) {
   const q = query.toLowerCase();
