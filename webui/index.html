@@ -14,11 +14,11 @@
 
   <!-- KOMUT PALETİ (U-13) -->
   <div id="commandPalette" class="command-palette" hidden>
-    <div class="cp-overlay" onclick="closePalette()"></div>
+    <div id="commandPaletteOverlay" class="cp-overlay"></div>
     <div class="cp-box">
-      <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--line); padding-bottom: 8px; margin-bottom: 8px;">
-        <span class="muted" style="font-size: 12px; font-weight: 500;">KOMUT PALETİ</span>
-        <button onclick="closePalette()" class="btn ghost-btn btn-sm" style="padding: 2px 8px; font-size: 12px;">✕ Kapat (Esc)</button>
+      <div class="cp-header">
+        <span class="cp-title">KOMUT PALETİ</span>
+        <button id="commandPaletteCloseBtn" class="btn ghost-btn btn-sm cp-close" type="button">✕ Kapat (Esc)</button>
       </div>
       <input type="text" id="cpInput" class="cp-input" placeholder="Komut ara…" autocomplete="new-password" spellcheck="false" name="random_search_field">
       <div id="cpResults" class="cp-results"></div>
@@ -27,21 +27,21 @@
 
   <!-- UYGULAMA EKLE -->
   <div id="appPicker" class="command-palette" hidden>
-    <div class="cp-overlay" onclick="closeAppPicker()"></div>
+    <div id="appPickerOverlay" class="cp-overlay"></div>
     <div class="cp-box">
-      <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--line); padding-bottom: 8px; margin-bottom: 8px;">
-        <span class="muted" style="font-size: 12px; font-weight: 500;">UYGULAMA EKLE</span>
-        <button onclick="closeAppPicker()" class="btn ghost-btn btn-sm" style="padding: 2px 8px; font-size: 12px;">✕ Kapat (Esc)</button>
+      <div class="cp-header">
+        <span class="cp-title">UYGULAMA EKLE</span>
+        <button id="appPickerCloseBtn" class="btn ghost-btn btn-sm cp-close" type="button">✕ Kapat (Esc)</button>
       </div>
       <input type="text" id="appPickerSearch" class="cp-input" placeholder="Kurulu uygulamalarda ara…" autocomplete="off" spellcheck="false">
       <div id="appPickerResults" class="cp-results"></div>
-      <div style="border-top: 1px solid var(--line); padding: 12px 20px;">
-        <p class="muted hint-sm" style="margin-bottom:8px">Listede yoksa .desktop dosyası seç ya da elle ekle:</p>
-        <button id="appPickerFileBtn" class="btn ghost-btn btn-sm" type="button">.desktop dosyası seç…</button>
-        <input type="file" id="appFileInput" accept=".desktop" style="display:none">
-        <div style="display:flex; gap:8px; margin-top:10px; flex-wrap:wrap">
-          <input type="text" id="manualAppName" class="text-input" placeholder="Görünen ad (opsiyonel)" style="flex:1; min-width:120px" autocomplete="off">
-          <input type="text" id="manualAppCommand" class="text-input" placeholder="Komut, ör: /opt/app/run --flag" style="flex:2; min-width:180px" autocomplete="off" spellcheck="false">
+      <div class="cp-footer">
+        <p class="muted hint-sm cp-footer-hint">Listede yoksa .desktop dosyası seç ya da elle ekle:</p>
+        <button id="appPickerFileBtn" class="btn ghost-btn btn-sm cp-file-btn" type="button">.desktop dosyası seç…</button>
+        <input type="file" id="appFileInput" class="cp-file-input" accept=".desktop">
+        <div class="cp-manual-row">
+          <input type="text" id="manualAppName" class="text-input cp-manual-name" placeholder="Görünen ad (opsiyonel)" autocomplete="off">
+          <input type="text" id="manualAppCommand" class="text-input cp-manual-command" placeholder="Komut, ör: /opt/app/run --flag" autocomplete="off" spellcheck="false">
           <button id="manualAppAddBtn" class="btn ghost-btn btn-sm" type="button">Ekle</button>
         </div>
       </div>
