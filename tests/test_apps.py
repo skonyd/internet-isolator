@@ -38,22 +38,28 @@ class TestApps(unittest.TestCase):
         self.assertEqual(argv[0], "terminator")
         self.assertIn("-u", argv)
 
-    def test_launch_system_profile_no_userdatadir(self):
-        """use_system_profile=True iken --user-data-dir VERİLMEZ (girişler korunur)."""
-        s = Settings()
-        p = Profile(name="t", use_system_profile=True)
-        with mock.patch.object(apps, "_running_on_host", return_value=False), \
-             mock.patch.object(apps, "_spawn", return_value=2) as spawn:
-            apps.launch(s, p, "google-chrome", dry_run=False)
-        joined = " ".join(spawn.call_args[0][2])
-        self.assertNotIn("--user-data-dir=", joined)
+    def test_launch_system_profile_still_isolates(self):
+        """use_system_profile=True olsa bile --user-data-dir VERİLİR.
 
-    def test_launch_system_profile_refuses_if_open_on_host(self):
+        Sistem profili paylaşılırsa Chromium, host'ta çalışan örneğe
+        SingletonSocket üzerinden devredip çıkar; pencere host'ta açılır ve
+        trafik host ağından gider. İzolasyon buna güvenemez.
+        """
         s = Settings()
         p = Profile(name="t", use_system_profile=True)
-        with mock.patch.object(apps, "_running_on_host", return_value=True):
-            with self.assertRaises(RuntimeError):
-                apps.launch(s, p, "opera", dry_run=False)
+        with mock.patch.object(apps, "_spawn", return_value=2) as spawn:
+            apps.launch(s, p, "google-chrome", dry_run=True)
+        joined = " ".join(spawn.call_args[0][2])
+        self.assertIn("--user-data-dir=", joined)
+
+    def test_launch_non_persistent_profile_still_isolates(self):
+        """persistent_profile=False de bayraksız bırakmaz (sistem profiline düşmez)."""
+        s = Settings()
+        p = Profile(name="t", persistent_profile=False, use_system_profile=False)
+        with mock.patch.object(apps, "_spawn", return_value=3) as spawn:
+            apps.launch(s, p, "opera", dry_run=True)
+        joined = " ".join(spawn.call_args[0][2])
+        self.assertIn("--user-data-dir=", joined)
 
     def test_spawn_wraps_with_resolv_bind(self):
         """_spawn, DNS symlink sorununu aşmak için resolv.conf bind sarmalı üretir."""

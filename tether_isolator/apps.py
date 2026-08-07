@@ -281,24 +281,26 @@ def launch(settings: Settings, profile: Profile, program: str,
     prog_name = os.path.basename(program.split()[0])
     flags = ""
 
-    # Mevcut sistem profilini kullan: --user-data-dir verme (girişler korunur).
-    # Güvenlik: tarayıcı host'ta zaten açıksa, izole kopya host'taki sürece
-    # bağlanır ve izolasyon delinir → başlatmayı reddet.
-    if profile.use_system_profile and prog_name in _APP_FLAGS:
-        if not dry_run and _running_on_host(prog_name, settings.namespace):
-            raise RuntimeError(
-                f"'{prog_name}' host'ta açık. Mevcut profili izole kullanmak için "
-                f"önce host'taki {prog_name} pencerelerini TAMAMEN kapatın "
-                f"(izolasyonun delinmemesi için).")
-        # firefox dışında çoğu Chromium tabanlı için ek bayrak gerekmez
-        flags = "--no-first-run" if "chrome" in prog_name or "chromium" in prog_name \
-            or "brave" in prog_name else ""
-        argv = shlex.split(f"{program} {flags}".strip())
-        return _spawn(settings, user, argv, dry_run=dry_run)
-
-    if prog_name in _APP_FLAGS and profile.persistent_profile:
+    # İzolasyon güvenliği: bu uygulamalar (Chromium ailesi, Firefox, VS Code)
+    # aynı profil dizinini kullanan bir örnek ZATEN çalışıyorsa, isteği
+    # SingletonSocket üzerinden o örneğe devredip kendileri çıkar. İzole alanda
+    # bu, pencerenin host'taki süreçte açılması — yani trafiğin host ağından
+    # çıkması — demektir; kullanıcı izole sandığı tarayıcıyı host ağıyla
+    # kullanır. Devri engellemenin tek güvenilir yolu profil dizinini
+    # ayırmaktır, bu yüzden bu uygulamalara HER ZAMAN izole bir profil verilir.
+    if prog_name in _APP_FLAGS:
+        if profile.use_system_profile:
+            log.warning(
+                "'%s' için sistem profili istendi; singleton devri izolasyonu "
+                "deleceği için yok sayıldı, izole profil kullanılıyor. "
+                "Oturumları taşımak için profili bir kez içe aktarın.", prog_name)
         tmpl, sub = _APP_FLAGS[prog_name]
         data_dir = os.path.join(profile.profile_data_dir(user), sub) if sub else ""
+        # Kalıcı olmayan profil de izole olmak zorunda: aksi halde bayraksız
+        # başlar ve doğrudan sistem profiline (dolayısıyla devre) düşer.
+        # Bu yüzden dizin verilir ama her başlatmada sıfırlanır.
+        if data_dir and not profile.persistent_profile and not dry_run:
+            shutil.rmtree(data_dir, ignore_errors=True)
         if data_dir and not dry_run:
             os.makedirs(data_dir, exist_ok=True)
             # Daemon root iken oluşturulan dizinler root sahipli olur; kullanıcı
@@ -350,29 +352,6 @@ def _spawn(settings: Settings, user: str, argv: list[str], *, dry_run: bool) -> 
         start_new_session=True,
     )
     return proc.pid
-
-
-def _running_on_host(prog_name: str, namespace: str) -> bool:
-    """Verilen uygulama HOST namespace'inde çalışıyor mu?
-
-    Kendi izole namespace'imizdeki örnekler hariç tutulur; aksi halde bizim
-    başlattığımız izole tarayıcı yanlışlıkla "host'ta açık" sanılırdı.
-
-    B-7: pgrep -x 15 karakter sınırını aşmak için önce pgrep -f ile argv
-    doğrulaması yapılır; eşleşen süreçlerin inode karşılaştırması ile host'ta
-    olup olmadığı teyit edilir.
-    """
-    ns_pids = set(list_namespace_pids(namespace))
-    try:
-        # pgrep -f: tam komut satırında ara (15 karakter sınırı yok)
-        r = subprocess.run(["pgrep", "-f", prog_name], capture_output=True, text=True)
-    except (OSError, subprocess.SubprocessError):
-        return False
-    if r.returncode != 0:
-        return False
-    found = {int(p) for p in r.stdout.split() if p.strip().isdigit()}
-    # Host'ta çalışan, bizim namespace'imizde olmayan var mı?
-    return bool(found - ns_pids - {os.getpid()})
 
 
 def list_namespace_pids(namespace: str) -> list[int]:
