@@ -326,17 +326,40 @@ class _Handler(BaseHTTPRequestHandler):
 
         if path == "/api/relay":
             if body.get("enabled"):
-                extra = body.get("extra_targets")
-                if isinstance(extra, str):
-                    extra = [x.strip() for x in extra.replace(";", ",").split(",")]
-                extra = [x for x in (extra or []) if x] if extra is not None else None
-                m.enable_relay(extra_targets=extra)
-                prof = m.active_profile
-                if prof is not None and extra is not None:
-                    prof.relay.extra_targets = list(extra)
-                    s.save()
+                # Ek hedefler artık /api/relay/targets/* ile kalıcı olarak
+                # profile.relay.extra_targets içinde tutuluyor; burada elle
+                # geçirmeye gerek yok, mevcut liste kullanılır.
+                m.enable_relay()
             else:
                 m.disable_relay()
+            return self._json({"ok": True, "state": m.snapshot()})
+
+        if path == "/api/relay/targets/add":
+            pname = body.get("profile") or s.active_profile
+            prof = s.profile(pname)
+            raw = body.get("value") or ""
+            values = [v.strip() for v in str(raw).replace(";", ",").split(",")]
+            values = [v for v in values if v]
+            if not values:
+                return self._json({"error": "value gerekli"}, 400)
+            for v in values:
+                if v not in prof.relay.extra_targets:
+                    prof.relay.extra_targets.append(v)
+            s.save()
+            if prof is m.active_profile:
+                m.reassert_relay_routes()
+            return self._json({"ok": True, "state": m.snapshot()})
+
+        if path == "/api/relay/targets/delete":
+            pname = body.get("profile") or s.active_profile
+            prof = s.profile(pname)
+            value = (body.get("value") or "").strip()
+            if not value:
+                return self._json({"error": "value gerekli"}, 400)
+            prof.relay.extra_targets = [v for v in prof.relay.extra_targets if v != value]
+            s.save()
+            if prof is m.active_profile:
+                m.remove_relay_target(value)
             return self._json({"ok": True, "state": m.snapshot()})
 
         if path == "/api/vpn":

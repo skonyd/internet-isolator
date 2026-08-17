@@ -429,7 +429,7 @@ function renderState(d) {
   $("speedTestBtn").disabled = busy || !running || !st.online;
   $("relayToggle").disabled = busy || !running;
   $("relayToggle").checked = !!st.relay_active;
-  $("relayExtra").disabled = busy || st.relay_active;
+  renderRelayTargets((d.profiles?.[d.active_profile]?.relay?.extra_targets) || []);
 
   // Çoklu VPN Render
   if (d.vpns) {
@@ -633,12 +633,71 @@ $("uplinkRefreshBtn").onclick = async () => {
 };
 
 $("relayToggle").onchange = (e) => withBusy(async () => {
-  const body = { enabled: e.target.checked };
-  if (e.target.checked) body.extra_targets = $("relayExtra").value.trim();
   await api("/api/relay", {
     method: "POST", headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
+    body: JSON.stringify({ enabled: e.target.checked }),
   });
+});
+
+// ------------------------------------------------------ Relay ek hedefler
+function renderRelayTargets(targets) {
+  const box = $("relayExtraList");
+  box.innerHTML = "";
+  if (!targets.length) {
+    box.innerHTML = '<span class="chip empty">ek hedef yok</span>';
+    return;
+  }
+  targets.forEach((t) => {
+    const el = document.createElement("span");
+    el.className = "chip";
+    el.appendChild(document.createTextNode(`🌐 ${t}`));
+    const del = document.createElement("span");
+    del.textContent = " ×";
+    del.title = "Listeden kaldır";
+    del.style.opacity = "0.6";
+    del.style.cursor = "pointer";
+    del.onclick = (ev) => {
+      ev.stopPropagation();
+      withBusy(async () => {
+        if (!confirm(`'${t}' listeden kaldırılsın mı?`)) return;
+        await api("/api/relay/targets/delete", {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ value: t }),
+        });
+      });
+    };
+    el.appendChild(del);
+    box.appendChild(el);
+  });
+}
+
+function closeNetPicker() { $("netPicker").hidden = true; }
+
+function openNetPicker() {
+  $("netPicker").hidden = false;
+  $("netPickerInput").value = "";
+  $("netPickerInput").focus();
+}
+
+$("addRelayTargetBtn").onclick = () => openNetPicker();
+$("netPickerCloseBtn").addEventListener("click", closeNetPicker);
+$("netPickerOverlay").addEventListener("click", closeNetPicker);
+
+async function addRelayTarget() {
+  const value = $("netPickerInput").value.trim();
+  if (!value) return;
+  await withBusy(async () => {
+    await api("/api/relay/targets/add", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ value }),
+    });
+  });
+  closeNetPicker();
+}
+
+$("netPickerAddBtn").onclick = () => addRelayTarget();
+$("netPickerInput").addEventListener("keydown", (e) => {
+  if (e.key === "Enter") { e.preventDefault(); addRelayTarget(); }
 });
 
 $("reconnectBtn").onclick = () => withBusy(async () => {
@@ -801,7 +860,7 @@ document.addEventListener("keydown", (e) => {
     e.preventDefault();
     togglePalette();
   }
-  if (e.key === "Escape") { closePalette(); closeAppPicker(); }
+  if (e.key === "Escape") { closePalette(); closeAppPicker(); closeNetPicker(); }
 });
 
 function togglePalette() {

@@ -96,6 +96,9 @@ class Relay:
             self._nft_enable(ns_subnet)
         elif system.have("iptables"):
             self._iptables_enable(ns_subnet)
+        # Docker kuruluysa kendi FORWARD/DOCKER-USER zinciri bizim ACCEPT
+        # kuralımızın üzerine DROP yazabilir; ayrıca istisna ekle.
+        self._docker_user_enable()
 
         # 6) Doğrulama: ns ucu gerçekten izole alanın İÇİNDE mi? (asıl kanıt)
         if not self.dry and not self._ns_veth_present():
@@ -106,6 +109,42 @@ class Relay:
                 f"sonrası oluşan bayat namespace eşleşmesinden olur — oturumu "
                 f"durdurup tek temiz oturum başlatmayı deneyin.")
         return routes
+
+    # --------------------------------------------------------- rotaları tazele
+    def reassert_routes(self, policy: RelayPolicy) -> list[str]:
+        """Relay rotalarını (LAN + ek hedefler) namespace'te YENİDEN uygular.
+
+        veth/NAT'a dokunmaz — sadece 'ip route replace ... via host_ip'
+        satırlarını tekrar yazar. VPN istemcisi (ns İÇİNDE çalışır) kendi
+        push route'larıyla relay'in ek-hedef rotalarının ÜZERİNE yazabilir
+        (ör. sunucu aynı /24'e daha spesifik/geç bir rota pushlarsa); bu
+        yüzden her VPN bağlan/yeniden-bağlan sonrası çağrılmalı ki kurum
+        hedefleri host LAN üzerinden gitmeye devam etsin.
+        """
+        if not self.is_active():
+            return []
+        _, _, host_ip = self._addrs(policy)
+        routes = self._host_lan_routes()
+        extra = self._resolve_extra(getattr(policy, "extra_targets", []))
+        for net in extra:
+            if net not in routes:
+                routes.append(net)
+        for net in routes:
+            self._ns("ip", "route", "replace", net, "via", host_ip, check=False)
+        return routes
+
+    def remove_extra_target(self, policy: RelayPolicy, value: str) -> None:
+        """Tek bir ek hedefin ns içindeki rota(larını) siler (best-effort).
+
+        Kullanıcı bir hedefi listeden kaldırdığında relay hâlâ açıksa,
+        `reassert_routes` yalnızca kalan hedefleri yeniden yazar; kaldırılanın
+        eski rotası kendiliğinden silinmez. Bu yüzden reassert'ten ÖNCE
+        çağrılmalı.
+        """
+        if not self.is_active():
+            return
+        for net in self._resolve_extra([value]):
+            self._ns("ip", "route", "del", net, check=False)
 
     # ----------------------------------------------------- host'un ulaştığı ağlar
     def _host_lan_routes(self) -> list[str]:
@@ -199,6 +238,37 @@ class Relay:
     def _nft_disable(self) -> None:
         run(["nft", "delete", "table", "ip", NFT_TABLE], check=False, dry_run=self.dry)
 
+    # ---------------------------------------------------------- Docker uyumu
+    def _docker_user_present(self) -> bool:
+        res = run(["iptables", "-S", "DOCKER-USER"], check=False, dry_run=self.dry)
+        return res.ok
+
+    def _docker_user_enable(self) -> None:
+        """Docker'ın kendi FORWARD zincirini (policy DROP) atlat.
+
+        Docker, kendi ağları DIŞINDAKİ tüm forward trafiğini reddeden bir
+        FORWARD zinciri kurar (nft'te ayrı bir 'filter' tablosu, priority
+        'filter' yani bizim tisor_relay'in -10'undan SONRA çalışır). Bizim
+        ACCEPT kuralımız bu yüzden yetmez — Docker'ın kendisi için bıraktığı
+        istisna noktası olan DOCKER-USER zincirine de veth trafiğini kabul
+        eden bir kural eklemek gerekir; aksi halde relay LAN'a hiç ulaşamaz.
+        """
+        if not system.have("iptables") or not self._docker_user_present():
+            return
+        for args in (["-i", HOST_VETH], ["-o", HOST_VETH]):
+            check_res = run(["iptables", "-C", "DOCKER-USER", *args, "-j", "ACCEPT"],
+                             check=False, dry_run=self.dry)
+            if not check_res.ok:
+                run(["iptables", "-I", "DOCKER-USER", *args, "-j", "ACCEPT"],
+                    check=False, dry_run=self.dry)
+
+    def _docker_user_disable(self) -> None:
+        if not system.have("iptables") or not self._docker_user_present():
+            return
+        for args in (["-i", HOST_VETH], ["-o", HOST_VETH]):
+            run(["iptables", "-D", "DOCKER-USER", *args, "-j", "ACCEPT"],
+                check=False, dry_run=self.dry)
+
     # ------------------------------------------------------------- NAT (iptables)
     def _iptables_enable(self, ns_subnet: str) -> None:
         # FORWARD: veth trafiğine izin (-I: politikadan önce)
@@ -235,6 +305,7 @@ class Relay:
     def disable(self) -> None:
         """Relay kanalını tamamen kaldırır → yeniden tam izolasyon."""
         log.info("relay kapatılıyor")
+        self._docker_user_disable()
         if system.have("nft"):
             self._nft_disable()
         elif system.have("iptables"):

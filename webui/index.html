@@ -48,6 +48,24 @@
     </div>
   </div>
 
+  <!-- AĞ EKLE (RELAY EK HEDEF) -->
+  <div id="netPicker" class="command-palette" hidden>
+    <div id="netPickerOverlay" class="cp-overlay"></div>
+    <div class="cp-box">
+      <div class="cp-header">
+        <span class="cp-title">AĞ EKLE</span>
+        <button id="netPickerCloseBtn" class="btn ghost-btn btn-sm cp-close" type="button">✕ Kapat (Esc)</button>
+      </div>
+      <div class="cp-footer" style="border-top:none">
+        <p class="muted hint-sm cp-footer-hint">IP, CIDR (10.0.15.0/24) ya da alan adı — virgülle birden fazla eklenebilir.</p>
+        <div class="cp-manual-row">
+          <input type="text" id="netPickerInput" class="text-input" placeholder="ör. mail.havelsan.com.tr, 195.214.160.160" autocomplete="off" spellcheck="false" style="flex:1">
+          <button id="netPickerAddBtn" class="btn ghost-btn btn-sm" type="button">Ekle</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <div class="titlebar">
     <div class="brand">
       <span class="logo">🛡️</span>
@@ -173,9 +191,11 @@
             </label>
           </div>
           <p class="muted hint-sm" style="margin-top:12px">Açıldığında izole alandaki uygulamalar, bu bilgisayarın <b>ethernet/yerel ağı üzerinden ulaştığı her yere</b> erişir. <b>İnternet değişmez</b> — izole alanın tether/WiFi bağlantısında kalır.</p>
-          <label class="field-label" style="margin-top:12px">Ek hedefler (opsiyonel, virgülle)</label>
-          <input type="text" id="relayExtra" class="text-input"
-                 placeholder="ör. mail.havelsan.com.tr, 195.214.160.160" autocomplete="off" spellcheck="false">
+          <label class="field-label" style="margin-top:12px">Ek hedefler (opsiyonel)</label>
+          <div id="relayExtraList" class="chip-list"></div>
+          <div style="margin-top:8px">
+            <button id="addRelayTargetBtn" class="btn ghost-btn btn-sm" type="button">+ Ağ Ekle</button>
+          </div>
           <p class="muted hint-sm" id="relayRoutes"></p>
         </div>
 

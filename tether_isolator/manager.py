@@ -187,6 +187,40 @@ class Manager:
             self._event("ok", f"Relay açıldı{detail}. İnternet tether'de.")
             self.state.persist()
 
+    def reassert_relay_routes(self) -> None:
+        """Relay rotalarını (LAN + ek hedefler) tazeler; her yerden çağrılabilir.
+
+        VPN istemcisi ns İÇİNDE çalışır ve kendi push route'larını ekler; bu
+        rotalar relay'in host-LAN rotalarının üzerine yazabilir. Ayrıca
+        kullanıcı ek hedef listesini relay AÇIKKEN değiştirirse (bkz.
+        /api/relay/targets/*) yeni hedefin hemen etkin olması için de bu
+        çağrılır. Relay aktifse rotaları burada yeniden uygulayarak kurum
+        hedeflerinin host LAN üzerinden gitmeye devam etmesini sağlarız.
+        """
+        with self._lock:
+            self._reassert_relay_routes_locked()
+
+    def remove_relay_target(self, value: str) -> None:
+        """Ek hedef listeden kaldırıldığında (relay AÇIKKEN) eski rotayı da siler."""
+        with self._lock:
+            if not self.state.relay_active or not self._active_profile:
+                return
+            try:
+                self.relay.remove_extra_target(self._active_profile.relay, value)
+            except Exception as e:  # noqa: BLE001
+                log.warning("relay hedef rotası silinirken: %s", e)
+            self._reassert_relay_routes_locked()
+
+    def _reassert_relay_routes_locked(self) -> None:
+        if not self.state.relay_active or not self._active_profile:
+            return
+        try:
+            routes = self.relay.reassert_routes(self._active_profile.relay)
+            if routes:
+                self.state.relay_targets = list(routes)
+        except Exception as e:  # noqa: BLE001
+            log.warning("relay rotaları tazelenirken: %s", e)
+
     def disable_relay(self) -> None:
         with self._lock:
             self.relay.disable()
@@ -223,6 +257,7 @@ class Manager:
                 raise
             st = self.vpn.status(name)
             self._update_vpn_state(name, st)
+            self._reassert_relay_routes_locked()
             self._event("ok", f"VPN '{name}' bağlandı ({st.get('iface')} {st.get('ip')}).")
             self.state.persist()
 
