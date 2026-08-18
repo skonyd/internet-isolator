@@ -61,9 +61,87 @@ function selectedUplinkKind() {
   return i ? i.kind : "";
 }
 
-function updateUplinkUI() {
-  $("wifiCreds").hidden = selectedUplinkKind() !== "wifi";
+let wifiNetworks = [];      // son tarama sonucu: {ssid, signal, security, saved}
+let wifiScanning = false;
+let wifiScannedFor = null;  // hangi arayüz için son tarandı
+let wifiScanError = "";     // son taramadan gelen hata mesajı (varsa)
+
+function signalBars(signal) {
+  // iw 'signal' dBm döner (ör. -40 güçlü, -90 zayıf).
+  if (signal === null || signal === undefined) return "📶";
+  if (signal >= -55) return "📶";
+  if (signal >= -70) return "📡";
+  return "📉";
 }
+
+function updateUplinkUI() {
+  const isWifi = selectedUplinkKind() === "wifi";
+  $("wifiCreds").hidden = !isWifi;
+  if (isWifi && wifiScannedFor !== selectedUplink) {
+    scanWifi();
+  }
+}
+
+async function scanWifi() {
+  if (!selectedUplink || selectedUplinkKind() !== "wifi" || wifiScanning) return;
+  wifiScanning = true;
+  wifiScannedFor = selectedUplink;
+  renderWifiNetworks(); // "taranıyor…" göster
+  try {
+    const res = await api(`/api/wifi/scan?iface=${encodeURIComponent(selectedUplink)}`);
+    wifiNetworks = res.networks || [];
+    wifiScanError = res.error || "";
+  } catch (e) {
+    wifiNetworks = [];
+    wifiScanError = e.message;
+    showToast("WiFi taraması başarısız: " + e.message, "error");
+  } finally {
+    wifiScanning = false;
+    renderWifiNetworks();
+  }
+}
+
+function selectWifiNetwork(ssid, saved) {
+  $("wifiSsid").value = ssid;
+  $("wifiPasswordSsid").textContent = ssid;
+  const needsPassword = !saved;
+  $("wifiPasswordLabel").hidden = !needsPassword;
+  $("wifiPassword").hidden = !needsPassword;
+  if (saved) $("wifiPassword").value = "";
+  renderWifiNetworks();
+  updateActionButtons();
+}
+
+function renderWifiNetworks() {
+  const box = $("wifiNetworkList");
+  box.innerHTML = "";
+  if (wifiScanning) {
+    box.innerHTML = '<div class="wifi-network-row empty">Ağlar taranıyor…</div>';
+    return;
+  }
+  if (!wifiNetworks.length) {
+    const row = document.createElement("div");
+    row.className = "wifi-network-row empty";
+    row.textContent = wifiScanError
+      ? `Tarama başarısız: ${wifiScanError}`
+      : "Ağ bulunamadı. ↻ ile yeniden tara.";
+    box.appendChild(row);
+    return;
+  }
+  const selectedSsid = $("wifiSsid").value;
+  wifiNetworks.forEach((n) => {
+    const row = document.createElement("button");
+    row.type = "button";
+    row.className = "wifi-network-row" + (n.ssid === selectedSsid ? " selected" : "");
+    row.innerHTML = `<span class="wifi-signal">${signalBars(n.signal)}</span>` +
+      `<span class="wifi-ssid">${n.ssid}</span>` +
+      `<span class="wifi-badges">${n.saved ? "🔑 kayıtlı" : (n.security === "open" ? "açık" : "🔒")}</span>`;
+    row.onclick = () => selectWifiNetwork(n.ssid, n.saved);
+    box.appendChild(row);
+  });
+}
+
+$("wifiScanBtn").onclick = () => scanWifi();
 
 function updateActionButtons() {
   const running = !["idle", "stopping"].includes(currentPhase);
@@ -551,7 +629,10 @@ async function poll() {
     if (firstLoad) {
       renderProfiles(d.profiles, d.active_profile);
       const ap = d.profiles[d.active_profile];
-      if (ap) $("useSystemProfile").checked = !!ap.use_system_profile;
+      if (ap) {
+        $("useSystemProfile").checked = !!ap.use_system_profile;
+        if (ap.wifi_ssid) selectWifiNetwork(ap.wifi_ssid, true);
+      }
       firstLoad = false;
       // Host dış IP'sini al (U-3) — tek seferlik
       fetchHostPublicIp();
@@ -822,6 +903,30 @@ $("speedTestBtn").onclick = () => withBusy(async () => {
   }
   setTimeout(() => { resultBox.hidden = true; }, 10000);
 });
+
+$("restartBtn").onclick = async () => {
+  if (!confirm("Uygulama arka plan servisleriyle (izole oturum, relay, VPN) " +
+               "birlikte yeniden başlatılsın mı?\n\nÇalışan izole uygulamalar " +
+               "ağ bağlantısını kaybedecek; panel birkaç saniye içinde kendini " +
+               "otomatik olarak yeniden açacak."))
+    return;
+  try {
+    await api("/api/restart", { method: "POST", headers: { "Content-Type": "application/json" } });
+  } catch (_) { /* daemon zaten yeniden başlıyor, bağlantı kopması beklenir */ }
+  clearInterval(pollTimer);
+  document.body.innerHTML =
+    '<div style="display:grid;place-items:center;height:100vh;font-family:' +
+    "var(--font);color:var(--muted);text-align:center\">" +
+    "<div><h1 style='font-size:28px'>⟳</h1>" +
+    "<p>Tether Isolator yeniden başlatılıyor…</p>" +
+    "<p style='font-size:13px'>Bu sayfa birkaç saniye içinde otomatik yenilenecek.</p></div></div>";
+  // daemon soketi kapatıp execv ile kendini yeniden başlatırken bir süre yanıt
+  // vermez; port tekrar ayağa kalkana kadar birkaç saniyede bir dene.
+  const tryReload = () => {
+    fetch(location.pathname).then(() => location.reload()).catch(() => setTimeout(tryReload, 1500));
+  };
+  setTimeout(tryReload, 2000);
+};
 
 $("quitBtn").onclick = async () => {
   if (!confirm("Panel kapatılsın mı?\n\nİzole oturum ve uygulamalar ÇALIŞMAYA " +

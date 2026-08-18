@@ -197,6 +197,27 @@ select {
 .wifi-creds { margin-top: 4px; }
 .wifi-creds[hidden] { display: none; }
 
+.wifi-network-list {
+  display: flex; flex-direction: column; gap: 2px; max-height: 220px;
+  overflow-y: auto; border: 1px solid var(--line); border-radius: var(--radius-sm);
+  padding: 4px; background: var(--card-solid);
+}
+.wifi-network-row {
+  display: flex; align-items: center; gap: 10px; padding: 8px 10px;
+  border-radius: var(--radius-sm); cursor: pointer; user-select: none;
+  border: 1px solid transparent; background: none; color: var(--text);
+  font: inherit; font-size: 13px; text-align: left; width: 100%;
+}
+.wifi-network-row:hover { background: rgba(127,127,127,.08); }
+.wifi-network-row.selected {
+  background: var(--accent); color: #fff; border-color: var(--accent);
+}
+.wifi-network-row .wifi-signal { font-size: 15px; opacity: .85; width: 18px; text-align: center; }
+.wifi-network-row .wifi-ssid { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.wifi-network-row .wifi-badges { display: flex; align-items: center; gap: 6px; font-size: 12px; opacity: .8; }
+.wifi-network-row.empty { color: var(--dim); cursor: default; }
+.wifi-network-row.empty:hover { background: none; }
+
 .chip-list { display: flex; flex-wrap: wrap; gap: 8px; }
 .chip {
   font-size: 13px; padding: 8px 14px; border-radius: 100px;

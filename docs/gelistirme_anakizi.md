@@ -346,9 +346,13 @@ Efor: **S (küçük, <yarım gün) · M (orta) · L (büyük)**.
 - **Uygulama:** systemd-logind `PrepareForSleep` D-Bus sinyalini dinle (ya da resume sonrası
   watchdog agresif reconcile); uplink/DHCP/VPN/relay durumunu otomatik onar.
 
-### H-5 🟡 WiFi SSID tarama — S
+### H-5 ✅ WiFi SSID tarama — S
 - **Neden:** SSID elle yazılıyor; hataya açık.
-- **Uygulama:** `iw dev <if> scan` (root) → SSID + sinyal listesi; `/api/wifi-scan` ucu; UI menü.
+- **Uygulama:** `system.wifi_scan()` (`iw dev <if> scan`, root) → SSID + sinyal listesi;
+  `GET /api/wifi/scan?iface=` ucu; kayıtlı ağlar `Settings.wifi_networks`'te SSID→parola
+  olarak kalıcı (profil bağımsız, Ubuntu ağ menüsü mantığı); UI'de tıklanabilir ağ listesi
+  (`webui/index.html` + `app.js`, kayıtlı ağlar 🔑 rozetiyle, parola alanı yalnızca
+  kayıtsız ağ seçilince görünür).
 
 ### H-6 🟡 Panelden profil oluştur/düzenle/sil (UI) — M
 - **Neden:** API (`/api/profile`) hazır, UI formu yok. İçe/dışa aktarma ile taşınabilirlik.

@@ -109,6 +109,9 @@ class Settings:
     # .desktop kısayolundan eklenen özel uygulamalar (global, VPN listesi gibi
     # tüm profillerde görünür). Her biri {"name": görünen ad, "command": çalıştırılacak komut}.
     custom_apps: list[dict] = field(default_factory=list)
+    # Daha önce bağlanılan WiFi ağları (SSID -> parola), Ubuntu ağ menüsündeki
+    # "kayıtlı ağlar" mantığıyla — profilden bağımsız, global olarak hatırlanır.
+    wifi_networks: dict[str, str] = field(default_factory=dict)
 
     # ---- yükle / kaydet ----
     @classmethod
@@ -137,6 +140,11 @@ class Settings:
             for c in raw.get("custom_apps", [])
             if isinstance(c, dict) and c.get("command")
         ]
+        wifi_networks = {
+            str(ssid): str(pw)
+            for ssid, pw in (raw.get("wifi_networks", {}) or {}).items()
+            if ssid
+        }
         return cls(
             namespace=raw.get("namespace", "tether_zone"),
             http_host=raw.get("http_host", "127.0.0.1"),
@@ -146,6 +154,7 @@ class Settings:
             active_profile=raw.get("active_profile", next(iter(profiles))),
             onboarded=bool(raw.get("onboarded", False)),
             custom_apps=custom_apps,
+            wifi_networks=wifi_networks,
         )
 
     def save(self) -> None:
@@ -158,6 +167,7 @@ class Settings:
             "active_profile": self.active_profile,
             "onboarded": self.onboarded,
             "custom_apps": self.custom_apps,
+            "wifi_networks": self.wifi_networks,
             "profiles": {name: asdict(p) for name, p in self.profiles.items()},
         }
         tmp = CONFIG_FILE + ".tmp"
@@ -174,6 +184,11 @@ class Settings:
         if name not in self.profiles:
             self.profiles[name] = Profile(name=name)
         return self.profiles[name]
+
+    def remember_wifi(self, ssid: str, password: str) -> None:
+        """SSID+parolayı kalıcı 'kayıtlı ağlar' listesine ekler/günceller."""
+        if ssid and password:
+            self.wifi_networks[ssid] = password
 
 
 def _chown_file_only(config_dir: str, config_file: str) -> None:

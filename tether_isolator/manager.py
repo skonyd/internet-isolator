@@ -401,6 +401,10 @@ class Manager:
                     prof.wifi_ssid = wifi_ssid
                 if wifi_password:
                     prof.wifi_password = wifi_password
+                elif prof.wifi_ssid and prof.wifi_ssid in self.s.wifi_networks:
+                    prof.wifi_password = self.s.wifi_networks[prof.wifi_ssid]
+                if prof.wifi_ssid and prof.wifi_password:
+                    self.s.remember_wifi(prof.wifi_ssid, prof.wifi_password)
 
             self.state.phase = "reconnecting"
             self.state.persist()

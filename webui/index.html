@@ -78,6 +78,7 @@
       <span id="rootBadge" class="badge">—</span>
       <span id="versionBadge" class="badge ghost">v—</span>
       <button id="themeToggle" class="theme-btn" title="Temayı değiştir (U-15)">🌓</button>
+      <button id="restartBtn" class="quit-btn" title="Uygulamayı ve arka plan servislerini yeniden başlat">⟳ Yeniden Başlat</button>
       <button id="quitBtn" class="quit-btn" title="Uygulamayı kapat">Çıkış</button>
     </div>
   </div>
@@ -124,11 +125,15 @@
         <div id="uplinkList" class="chip-list"></div>
 
         <div id="wifiCreds" class="wifi-creds" hidden>
-          <label class="field-label">WiFi ağı (SSID)</label>
-          <input type="text" id="wifiSsid" class="text-input" placeholder="Ağ adı" autocomplete="off" spellcheck="false">
-          <label class="field-label">WiFi parolası</label>
-          <input type="password" id="wifiPassword" class="text-input" placeholder="Parola (boş = kayıtlıyı kullan)" autocomplete="off">
-          <p class="muted hint-sm">Parola yalnızca bu cihazda saklanır.</p>
+          <div style="display:flex; align-items:center; justify-content:space-between; gap:8px; margin-bottom:4px">
+            <label class="field-label" style="margin:0">WiFi ağları</label>
+            <button id="wifiScanBtn" class="icon-refresh-btn" type="button" title="Ağları tara">↻</button>
+          </div>
+          <div id="wifiNetworkList" class="chip-list wifi-network-list"></div>
+          <input type="hidden" id="wifiSsid">
+          <label class="field-label" id="wifiPasswordLabel" hidden>"<span id="wifiPasswordSsid"></span>" parolası</label>
+          <input type="password" id="wifiPassword" class="text-input" placeholder="Parola" autocomplete="off" hidden>
+          <p class="muted hint-sm">Daha önce bağlanılan ağların parolası bu cihazda hatırlanır; tekrar girmene gerek yok.</p>
         </div>
 
         <label class="field-label">Başlatılacak uygulamalar</label>

@@ -22,6 +22,7 @@ import secrets
 import signal
 import socket
 import socketserver
+import sys
 import threading
 import time
 import webbrowser
@@ -44,6 +45,17 @@ MAX_BODY_SIZE = 1_048_576  # 1 MB
 
 # Token dosya yolu (G-1)
 TOKEN_PATH = "/run/tether-isolator/api.token"
+
+# /api/restart tarafından ayarlanır; serve_forever() döndükten sonra `serve()`
+# bu bayrağa bakıp süreci kendi üzerine yeniden başlatır (execv). Modül seviyesi
+# bir bayrak kullanılır çünkü istek thread'i ile serve_forever()'ı çalıştıran
+# ana thread ayrı; ikisi arasında en basit iletişim yolu budur.
+_restart_requested = False
+
+
+def request_restart() -> None:
+    global _restart_requested
+    _restart_requested = True
 
 
 def _chown_to_real_user(*paths: str) -> None:
@@ -220,7 +232,37 @@ class _Handler(BaseHTTPRequestHandler):
             return self._json({"vpns": vpns})
         if path == "/api/apps/desktop":
             return self._json({"apps": apps.list_desktop_apps()})
+        if path == "/api/wifi/saved":
+            return self._json({"networks": sorted(self.settings.wifi_networks.keys())})
+        if path.startswith("/api/wifi/scan"):
+            return self._api_wifi_scan()
         return self._json({"error": "bulunamadı"}, 404)
+
+    def _api_wifi_scan(self):
+        # ÖNEMLİ: do_GET, self.path'i ayrıştırıp sorgu dizesini (?iface=...)
+        # ATMIŞ path'i verir; iface'i almak için ham self.path kullanılmalı.
+        from urllib.parse import parse_qs
+        qs = parse_qs(urlparse(self.path).query)
+        iface = (qs.get("iface", [""])[0] or "").strip()
+        if not iface:
+            return self._json({"error": "iface gerekli"}, 400)
+        m, s = self.manager, self.settings
+        ns = m.state.namespace if system.interface_in_namespace(s.namespace, iface) else None
+        found, err = system.wifi_scan(iface, in_namespace=ns, dry_run=m.dry)
+        saved = s.wifi_networks
+        networks = [
+            {"ssid": n.ssid, "signal": n.signal, "security": n.security,
+             "saved": n.ssid in saved}
+            for n in found
+        ]
+        # Menzil dışına çıkmış ama daha önce kayıtlı olan ağları da (bulunamasa
+        # bile) listenin altına ekle — Ubuntu'nun "kayıtlı ağlar" davranışı.
+        seen = {n["ssid"] for n in networks}
+        for ssid in saved:
+            if ssid not in seen:
+                networks.append({"ssid": ssid, "signal": None, "security": "wpa",
+                                  "saved": True})
+        return self._json({"networks": networks, "error": err if not networks else ""})
 
     def _status_payload(self) -> dict:
         s = self.settings
@@ -302,6 +344,11 @@ class _Handler(BaseHTTPRequestHandler):
                 prof.wifi_ssid = body["wifi_ssid"]
             if body.get("wifi_password"):   # boşsa kayıtlı parolayı koru
                 prof.wifi_password = body["wifi_password"]
+            elif prof.wifi_ssid and prof.wifi_ssid in s.wifi_networks:
+                # bu SSID başka bir profilde/daha önce kaydedilmişse parolayı devral
+                prof.wifi_password = s.wifi_networks[prof.wifi_ssid]
+            if prof.wifi_ssid and prof.wifi_password:
+                s.remember_wifi(prof.wifi_ssid, prof.wifi_password)
             s.active_profile = pname
             s.save()
             m.start_session(prof, uplink)
@@ -482,6 +529,40 @@ class _Handler(BaseHTTPRequestHandler):
                 threading.Thread(target=self.httpd.shutdown, daemon=True).start()
             return None
 
+        if path == "/api/restart":
+            # Yeniden başlat = izole oturumu ve arka plan servislerini (relay,
+            # watchdog, DHCP/wpa_supplicant vb.) tam olarak durdurup daemon
+            # sürecini kendi üzerine yeniden başlatır (execv). "Çıkış"tan farkı:
+            # burada oturum da teardown edilir VE daemon otomatik olarak
+            # yeniden ayağa kalkar (kullanıcının paneli tekrar açması gerekmez).
+            try:
+                m.stop_session()
+            except Exception:  # noqa: BLE001
+                log.exception("yeniden başlatma öncesi oturum durdurulamadı")
+            # Kalıntı/kopya süreçleri de temizle: eski bir kod sürümünden kalmış
+            # ikinci bir daemon örneği (portu tutup yenisinin başlamasını
+            # engelleyebilir) ve sahipsiz kalmış WiFi yardımcı süreçleri
+            # (wpa_supplicant/dhcpcd — namespace silinse de süreç kendiliğinden
+            # ölmeyebilir). Kendi PID'imiz her zaman hariç tutulur.
+            try:
+                my_pid = os.getpid()
+                stray_daemons = system.kill_stray_daemons(
+                    "tether_isolator gui", exclude_pid=my_pid)
+                if stray_daemons:
+                    log.warning("kalıntı daemon süreçleri sonlandırıldı: %s", stray_daemons)
+                stray_helpers = system.kill_stray_daemons(
+                    f"/etc/netns/{s.namespace}/wpa_", exclude_pid=my_pid)
+                if stray_helpers:
+                    log.warning("sahipsiz WiFi yardımcı süreçleri sonlandırıldı: %s",
+                                stray_helpers)
+            except Exception:  # noqa: BLE001
+                log.exception("kalıntı süreç temizliği başarısız")
+            self._json({"ok": True, "restarting": True})
+            request_restart()
+            if self.httpd is not None:
+                threading.Thread(target=self.httpd.shutdown, daemon=True).start()
+            return None
+
         return self._json({"error": "bulunamadı"}, 404)
 
 
@@ -616,6 +697,20 @@ def serve(settings: Settings, *, dry_run: bool = False, open_browser: bool = Tru
         # ile yapılır. Watchdog thread'ini yalnızca durdur.
         manager._stop_watchdog()
         httpd.server_close()
+
+    if _restart_requested:
+        # Süreci kendi üzerine yeniden başlat (execv): root ayrıcalığı (pkexec
+        # ile alınmıştı) korunur, yeni bir polkit parolası istenmez; modüller
+        # ve tüm arka plan thread'leri sıfırdan başlar.
+        #
+        # ÖNEMLİ: -m tether_isolator olarak yeniden başlatılmalı (sys.argv[0]'ı
+        # doğrudan execv'e vermek relative import'ları kırar — __main__.py paket
+        # dışı bir script gibi çalışır). Ayrıca --no-browser bayrağı YİNELENMEZ:
+        # kullanıcı restart'ı panelden tetiklediği için tarayıcının otomatik
+        # yeniden açılması istenir.
+        log.info("yeniden başlatılıyor...")
+        extra = [a for a in sys.argv[1:] if a != "--no-browser"]
+        os.execv(sys.executable, [sys.executable, "-m", "tether_isolator", *extra])
 
 
 def _profile_view(p: Profile) -> dict:

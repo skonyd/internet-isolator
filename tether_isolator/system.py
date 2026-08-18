@@ -9,7 +9,9 @@ import logging
 import os
 import pwd
 import shutil
+import signal
 import subprocess
+import time
 from dataclasses import dataclass, field
 from typing import Optional
 
@@ -209,3 +211,110 @@ def detect_wifi_phy(iface: str) -> Optional[str]:
             return f.read().strip()
     except OSError:
         return None
+
+
+@dataclass
+class WifiNetwork:
+    ssid: str
+    signal: Optional[float] = None   # dBm (yüksek/0'a yakın = güçlü)
+    security: str = "open"           # open / wpa
+
+
+def _parse_iw_scan(out: str) -> list[WifiNetwork]:
+    """`iw dev <iface> scan` çıktısını ağ listesine çevirir."""
+    networks: dict[str, WifiNetwork] = {}
+
+    def _commit(bss: Optional[WifiNetwork]) -> None:
+        if bss is None or not bss.ssid:
+            return
+        existing = networks.get(bss.ssid)
+        if existing is None or (bss.signal or -999) > (existing.signal or -999):
+            networks[bss.ssid] = bss
+
+    cur: Optional[WifiNetwork] = None
+    for raw in out.splitlines():
+        line = raw.strip()
+        if line.startswith("BSS "):
+            _commit(cur)
+            cur = WifiNetwork(ssid="")
+        elif cur is None:
+            continue
+        elif line.startswith("SSID:"):
+            cur.ssid = line.split("SSID:", 1)[1].strip()
+        elif line.startswith("signal:"):
+            try:
+                cur.signal = float(line.split("signal:", 1)[1].strip().split()[0])
+            except (ValueError, IndexError):
+                pass
+        elif line.startswith(("WPA:", "RSN:")):
+            cur.security = "wpa"
+    _commit(cur)
+    return sorted(networks.values(), key=lambda n: -(n.signal if n.signal is not None else -999))
+
+
+def wifi_scan(iface: str, *, in_namespace: Optional[str] = None,
+              dry_run: bool = False) -> tuple[list[WifiNetwork], str]:
+    """Çevredeki WiFi ağlarını tarar (Ubuntu ağ menüsündeki gibi bir liste için).
+
+    `in_namespace` verilirse tarama, PHY'ı zaten devralmış olan izole alan
+    içinde yapılır (arayüz artık host'ta görünmez); aksi halde host'ta yapılır.
+
+    (ağlar, hata_mesajı) döner — tarama başarısızsa ağlar boş liste, hata_mesajı
+    doludur; başarılıysa hata_mesajı boş string'dir. root olmadan `iw scan`
+    çoğu sürücüde "Operation not permitted" ile başarısız olur; ayrıca
+    NetworkManager aynı anda tarama yapıyorsa "Device or resource busy" (EBUSY)
+    dönebilir — bu geçicidir, birkaç kez yeniden denenir.
+    """
+    if dry_run:
+        return [], ""
+    if not is_root():
+        return [], "WiFi taraması root yetkisi gerektirir; paneli root olarak çalıştırın."
+    if not have("iw"):
+        return [], "'iw' aracı kurulu değil (sudo apt install iw)."
+    base = ["ip", "netns", "exec", in_namespace] if in_namespace else []
+    run(base + ["ip", "link", "set", iface, "up"], check=False, dry_run=dry_run)
+    last_err = ""
+    for attempt in range(3):
+        res = run(base + ["iw", "dev", iface, "scan"], check=False, timeout=15,
+                  dry_run=dry_run)
+        if res.ok:
+            return _parse_iw_scan(res.out), ""
+        last_err = (res.err or res.out).strip()
+        # "resource busy" (EBUSY) genelde NetworkManager'ın eşzamanlı taraması
+        # yüzünden olur ve kısa bekleyince geçer; diğer hatalarda tekrar denemenin
+        # faydası yok (ör. arayüz yok, izin yok).
+        if "busy" not in last_err.lower():
+            break
+        time.sleep(1.5)
+    return [], last_err or "tarama başarısız"
+
+
+def kill_stray_daemons(pattern: str, *, exclude_pid: int) -> list[int]:
+    """`/proc` üzerinden komut satırında `pattern` geçen (kendisi HARİÇ) tüm
+    süreçlere SIGTERM gönderir; sonlandırılan PID'leri döndürür.
+
+    "Yeniden başlat"ta artık kalıntı/kopya daemon süreçlerini (ör. eski bir
+    kod sürümünden kalmış, portu tutan bir örnek) veya bize ait yalnız kalmış
+    yardımcı süreçleri (wpa_supplicant vb.) temizlemek için kullanılır. Kendi
+    PID'imizi (exclude_pid) HARİÇ tutmak zorunlu: execv ile kendimizi yeniden
+    başlatmadan önce kendimizi SIGTERM'lemeyelim.
+    """
+    killed: list[int] = []
+    for pid_s in os.listdir("/proc"):
+        if not pid_s.isdigit():
+            continue
+        pid = int(pid_s)
+        if pid == exclude_pid:
+            continue
+        try:
+            with open(f"/proc/{pid_s}/cmdline", "rb") as f:
+                cmdline = f.read().replace(b"\x00", b" ").decode(errors="replace")
+        except OSError:
+            continue
+        if pattern in cmdline:
+            try:
+                os.kill(pid, signal.SIGTERM)
+                killed.append(pid)
+            except OSError:
+                pass
+    return killed
