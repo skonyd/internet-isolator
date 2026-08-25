@@ -61,18 +61,53 @@ function selectedUplinkKind() {
   return i ? i.kind : "";
 }
 
+// ------------------------------------------------------ Wi-Fi seçici (Ubuntu/GNOME tarzı)
 let wifiNetworks = [];      // son tarama sonucu: {ssid, signal, security, saved}
 let wifiScanning = false;
 let wifiScannedFor = null;  // hangi arayüz için son tarandı
 let wifiScanError = "";     // son taramadan gelen hata mesajı (varsa)
+let wifiCurrentSsid = "";   // arayüzün ŞU AN bağlı olduğu ağ
+let wifiAuthTarget = null;  // parola penceresinin hedefi: {ssid, hidden}
 
-function signalBars(signal) {
-  // iw 'signal' dBm döner (ör. -40 güçlü, -90 zayıf).
-  if (signal === null || signal === undefined) return "📶";
-  if (signal >= -55) return "📶";
-  if (signal >= -70) return "📡";
-  return "📉";
+// GNOME'un ağ simgesi: ortak merkezli üç yay + nokta. Sinyal seviyesine göre
+// yaylar sönükleşir (0 = yalnızca nokta → çok zayıf / menzil dışı).
+function wifiSignalIcon(signal) {
+  let level;
+  if (signal === null || signal === undefined) level = 0;
+  else if (signal >= -55) level = 3;
+  else if (signal >= -67) level = 2;
+  else if (signal >= -78) level = 1;
+  else level = 0;
+  const arc = (need, d) =>
+    `<path d="${d}" fill="none" stroke="currentColor" stroke-width="1.7"` +
+    ` stroke-linecap="round" class="${level >= need ? "" : "arc-off"}"/>`;
+  return '<svg viewBox="0 0 16 16" aria-hidden="true">' +
+    arc(3, "M1.26 6.84 A8.8 8.8 0 0 1 14.74 6.84") +
+    arc(2, "M3.40 8.64 A6 6 0 0 1 12.60 8.64") +
+    arc(1, "M5.55 10.44 A3.2 3.2 0 0 1 10.45 10.44") +
+    '<circle cx="8" cy="12.6" r="1.35" fill="currentColor"/></svg>';
 }
+
+const WIFI_LOCK_SVG =
+  '<svg viewBox="0 0 16 16" aria-hidden="true">' +
+  '<rect x="3.5" y="7" width="9" height="7" rx="1.6" fill="currentColor"/>' +
+  '<path d="M5.75 7V5.25a2.25 2.25 0 0 1 4.5 0V7" fill="none" stroke="currentColor" stroke-width="1.4"/></svg>';
+const WIFI_CHECK_SVG =
+  '<svg viewBox="0 0 16 16" aria-hidden="true">' +
+  '<path d="M3.5 8.5l3 3 6-7" fill="none" stroke="currentColor" stroke-width="2"' +
+  ' stroke-linecap="round" stroke-linejoin="round"/></svg>';
+// Dolu cog: ince çizgili/ışınsal bir dişli 16px'te "parlaklık" simgesi gibi
+// okunuyordu; dolu gövde küçük boyutta net kalıyor.
+const WIFI_GEAR_SVG =
+  '<svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="' +
+  'M12 15.5A3.5 3.5 0 0 1 8.5 12 3.5 3.5 0 0 1 12 8.5a3.5 3.5 0 0 1 3.5 3.5 3.5 3.5 0 0 1-3.5 3.5' +
+  'm7.43-2.53c.04-.32.07-.64.07-.97 0-.33-.03-.66-.07-1l2.11-1.63c.19-.15.24-.42.12-.64l-2-3.46' +
+  'c-.12-.22-.39-.31-.61-.22l-2.49 1c-.52-.39-1.06-.73-1.69-.98l-.37-2.65A.506.506 0 0 0 14 2h-4' +
+  'c-.25 0-.46.18-.5.42l-.37 2.65c-.63.25-1.17.59-1.69.98l-2.49-1c-.22-.09-.49 0-.61.22l-2 3.46' +
+  'c-.13.22-.07.49.12.64L4.57 11c-.04.34-.07.67-.07 1 0 .33.03.65.07.97l-2.11 1.66' +
+  'c-.19.15-.25.42-.12.64l2 3.46c.12.22.39.3.61.22l2.49-1.01c.52.4 1.06.74 1.69.99l.37 2.65' +
+  'c.04.24.25.42.5.42h4c.25 0 .46-.18.5-.42l.37-2.65c.63-.26 1.17-.59 1.69-.99l2.49 1.01' +
+  'c.22.08.49 0 .61-.22l2-3.46c.12-.22.07-.49-.12-.64l-2.11-1.66Z"/></svg>';
 
 function updateUplinkUI() {
   const isWifi = selectedUplinkKind() === "wifi";
@@ -86,62 +121,310 @@ async function scanWifi() {
   if (!selectedUplink || selectedUplinkKind() !== "wifi" || wifiScanning) return;
   wifiScanning = true;
   wifiScannedFor = selectedUplink;
-  renderWifiNetworks(); // "taranıyor…" göster
+  $("wifiSpinner").hidden = false;
+  renderWifiNetworks();
   try {
     const res = await api(`/api/wifi/scan?iface=${encodeURIComponent(selectedUplink)}`);
     wifiNetworks = res.networks || [];
+    wifiCurrentSsid = res.current || "";
     wifiScanError = res.error || "";
   } catch (e) {
     wifiNetworks = [];
     wifiScanError = e.message;
-    showToast("WiFi taraması başarısız: " + e.message, "error");
   } finally {
     wifiScanning = false;
+    $("wifiSpinner").hidden = true;
     renderWifiNetworks();
   }
 }
 
+// Bir ağı oturum için seçer. Ubuntu'da tıklama anında bağlanır; burada bağlantı
+// "Başlat"/"Bu uplink'e geç" ile kurulduğu için tıklama seçim yapar ve parola
+// gerekiyorsa (kayıtlı değilse) GNOME'daki gibi parola penceresini açar.
 function selectWifiNetwork(ssid, saved) {
   $("wifiSsid").value = ssid;
-  $("wifiPasswordSsid").textContent = ssid;
-  const needsPassword = !saved;
-  $("wifiPasswordLabel").hidden = !needsPassword;
-  $("wifiPassword").hidden = !needsPassword;
   if (saved) $("wifiPassword").value = "";
   renderWifiNetworks();
   updateActionButtons();
 }
 
+function onWifiRowClick(n) {
+  const open = n.security === "open";
+  if (n.saved || open) {
+    selectWifiNetwork(n.ssid, true);
+    return;
+  }
+  openWifiAuth(n.ssid);
+}
+
+function wifiSubtitle(n) {
+  if (n.ssid === wifiCurrentSsid) return "Bağlandı";
+  if (n.ssid === $("wifiSsid").value) return "Seçildi — bağlanmak için Başlat'a basın";
+  if (n.saved && (n.signal === null || n.signal === undefined)) return "Kayıtlı · menzil dışı";
+  if (n.saved) return "Kayıtlı";
+  if (n.security === "open") return "Açık ağ";
+  return "Güvenli (WPA)";
+}
+
 function renderWifiNetworks() {
   const box = $("wifiNetworkList");
   box.innerHTML = "";
-  if (wifiScanning) {
-    box.innerHTML = '<div class="wifi-network-row empty">Ağlar taranıyor…</div>';
+
+  if (wifiScanning && !wifiNetworks.length) {
+    const d = document.createElement("div");
+    d.className = "wifi-empty";
+    d.textContent = "Ağlar taranıyor…";
+    box.appendChild(d);
     return;
   }
   if (!wifiNetworks.length) {
-    const row = document.createElement("div");
-    row.className = "wifi-network-row empty";
-    row.textContent = wifiScanError
+    const d = document.createElement("div");
+    d.className = "wifi-empty" + (wifiScanError ? " is-error" : "");
+    d.textContent = wifiScanError
       ? `Tarama başarısız: ${wifiScanError}`
-      : "Ağ bulunamadı. ↻ ile yeniden tara.";
-    box.appendChild(row);
+      : "Menzilde ağ bulunamadı. ↻ ile yeniden tarayın.";
+    box.appendChild(d);
     return;
   }
+
+  // Bağlı ağ Ubuntu'da olduğu gibi her zaman en üstte.
+  const list = [...wifiNetworks].sort((a, b) => {
+    if (a.ssid === wifiCurrentSsid) return -1;
+    if (b.ssid === wifiCurrentSsid) return 1;
+    return 0;
+  });
+
   const selectedSsid = $("wifiSsid").value;
-  wifiNetworks.forEach((n) => {
-    const row = document.createElement("button");
-    row.type = "button";
-    row.className = "wifi-network-row" + (n.ssid === selectedSsid ? " selected" : "");
-    row.innerHTML = `<span class="wifi-signal">${signalBars(n.signal)}</span>` +
-      `<span class="wifi-ssid">${n.ssid}</span>` +
-      `<span class="wifi-badges">${n.saved ? "🔑 kayıtlı" : (n.security === "open" ? "açık" : "🔒")}</span>`;
-    row.onclick = () => selectWifiNetwork(n.ssid, n.saved);
+  list.forEach((n) => {
+    const isCurrent = n.ssid === wifiCurrentSsid;
+    const row = document.createElement("div");
+    row.className = "wifi-row"
+      + (isCurrent ? " is-current" : "")
+      + (n.ssid === selectedSsid && !isCurrent ? " is-selected" : "");
+
+    const main = document.createElement("button");
+    main.type = "button";
+    main.className = "wifi-row-main";
+
+    const icon = document.createElement("span");
+    icon.className = "wifi-icon";
+    icon.innerHTML = wifiSignalIcon(n.signal);
+
+    const info = document.createElement("span");
+    info.className = "wifi-info";
+    const name = document.createElement("span");
+    name.className = "wifi-name";
+    name.textContent = n.ssid;          // SSID gövdeden gelir → textContent şart
+    const sub = document.createElement("span");
+    sub.className = "wifi-sub";
+    sub.textContent = wifiSubtitle(n);
+    info.append(name, sub);
+
+    const meta = document.createElement("span");
+    meta.className = "wifi-meta";
+    if (n.security !== "open") meta.innerHTML = WIFI_LOCK_SVG;
+    if (isCurrent) {
+      const chk = document.createElement("span");
+      chk.className = "wifi-check";
+      chk.innerHTML = WIFI_CHECK_SVG;
+      meta.appendChild(chk);
+    }
+
+    main.append(icon, info, meta);
+    main.onclick = () => onWifiRowClick(n);
+    row.appendChild(main);
+
+    if (n.saved) {
+      const gear = document.createElement("button");
+      gear.type = "button";
+      gear.className = "wifi-gear";
+      gear.title = `"${n.ssid}" ağının ayarları`;
+      gear.innerHTML = WIFI_GEAR_SVG;
+      gear.onclick = (ev) => { ev.stopPropagation(); openWifiEdit(n); };
+      row.appendChild(gear);
+    }
     box.appendChild(row);
   });
 }
 
+async function forgetWifi(ssid) {
+  if (!confirm(`"${ssid}" ağı unutulsun mu?\n\n` +
+               "Kayıtlı parola silinir; tekrar bağlanmak için parolayı yeniden girmen gerekir."))
+    return;
+  try {
+    await api("/api/wifi/forget", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ssid }),
+    });
+    if ($("wifiSsid").value === ssid) { $("wifiSsid").value = ""; $("wifiPassword").value = ""; }
+    showToast(`"${ssid}" unutuldu.`, "info");
+    scanWifi();
+  } catch (e) {
+    showToast("Ağ unutulamadı: " + e.message, "error");
+  }
+}
+
+// ---- parola penceresi (GNOME "Authentication Required" muadili) ----
+function openWifiAuth(ssid, opts = {}) {
+  const hidden = !!opts.hidden;
+  wifiAuthTarget = { ssid: ssid || "", hidden };
+  $("wifiAuthSsid").textContent = hidden ? "Gizli ağ" : ssid;
+  $("wifiAuthSsidRow").hidden = !hidden;
+  $("wifiAuthSsidInput").value = "";
+  $("wifiAuthPassword").value = "";
+  $("wifiAuthPassword").type = "password";
+  $("wifiAuthShow").checked = false;
+  $("wifiAuthError").hidden = true;
+  $("wifiAuth").hidden = false;
+  updateWifiAuthState();
+  setTimeout(() => $(hidden ? "wifiAuthSsidInput" : "wifiAuthPassword").focus(), 50);
+}
+
+function closeWifiAuth() {
+  $("wifiAuth").hidden = true;
+  wifiAuthTarget = null;
+}
+
+// Ubuntu'daki davranış: WPA parolası 8 karakterden kısayken "Bağlan" pasif.
+function updateWifiAuthState() {
+  if (!wifiAuthTarget) return;
+  const pw = $("wifiAuthPassword").value;
+  const ssidOk = wifiAuthTarget.hidden ? !!$("wifiAuthSsidInput").value.trim() : true;
+  $("wifiAuthConnect").disabled = pw.length < 8 || !ssidOk;
+}
+
+function confirmWifiAuth() {
+  if (!wifiAuthTarget) return;
+  const ssid = wifiAuthTarget.hidden
+    ? $("wifiAuthSsidInput").value.trim()
+    : wifiAuthTarget.ssid;
+  const pw = $("wifiAuthPassword").value;
+  if (!ssid) {
+    $("wifiAuthError").textContent = "Ağ adı gerekli.";
+    $("wifiAuthError").hidden = false;
+    return;
+  }
+  if (pw.length < 8) {
+    $("wifiAuthError").textContent = "WPA parolası en az 8 karakter olmalı.";
+    $("wifiAuthError").hidden = false;
+    return;
+  }
+  $("wifiSsid").value = ssid;
+  $("wifiPassword").value = pw;
+  // Gizli ağ listede yoksa görünür kıl ki seçili olduğu belli olsun.
+  if (!wifiNetworks.some((n) => n.ssid === ssid)) {
+    wifiNetworks.push({ ssid, signal: null, security: "wpa", saved: false });
+  }
+  closeWifiAuth();
+  renderWifiNetworks();
+  updateActionButtons();
+  showToast(`"${ssid}" seçildi — bağlanmak için Başlat'a basın.`, "info");
+}
+
+// ---- kayıtlı ağ ayarları penceresi (GNOME ağ ayarları muadili) ----
+let wifiEditTarget = null;
+
+function wifiSignalLabel(signal) {
+  if (signal === null || signal === undefined) return "menzil dışı";
+  let q = "zayıf";
+  if (signal >= -55) q = "mükemmel";
+  else if (signal >= -67) q = "iyi";
+  else if (signal >= -78) q = "orta";
+  return `${Math.round(signal)} dBm · ${q}`;
+}
+
+function openWifiEdit(n) {
+  wifiEditTarget = n;
+  $("wifiEditSecurity").textContent = n.security === "open" ? "Açık (parolasız)" : "WPA/WPA2";
+  $("wifiEditSignal").textContent = wifiSignalLabel(n.signal);
+  $("wifiEditStatus").textContent = n.ssid === wifiCurrentSsid ? "Bağlı" : "Kayıtlı";
+  $("wifiEditSsid").value = n.ssid;
+  $("wifiEditPassword").value = "";
+  $("wifiEditPassword").type = "password";
+  $("wifiEditShow").checked = false;
+  $("wifiEditError").hidden = true;
+  $("wifiEdit").hidden = false;
+  setTimeout(() => $("wifiEditPassword").focus(), 50);
+}
+
+function closeWifiEdit() {
+  $("wifiEdit").hidden = true;
+  wifiEditTarget = null;
+}
+
+function wifiEditFail(msg) {
+  $("wifiEditError").textContent = msg;
+  $("wifiEditError").hidden = false;
+}
+
+async function saveWifiEdit() {
+  if (!wifiEditTarget) return;
+  const oldSsid = wifiEditTarget.ssid;
+  const ssid = $("wifiEditSsid").value.trim();
+  const password = $("wifiEditPassword").value;
+  if (!ssid) return wifiEditFail("Ağ adı boş olamaz.");
+  if (password && password.length < 8)
+    return wifiEditFail("WPA parolası en az 8 karakter olmalı.");
+  try {
+    await api("/api/wifi/save", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ssid, old_ssid: oldSsid, password }),
+    });
+  } catch (e) {
+    return wifiEditFail(e.message);
+  }
+  // Seçili ağ yeniden adlandırıldıysa seçimi de taşı.
+  if ($("wifiSsid").value === oldSsid) $("wifiSsid").value = ssid;
+  closeWifiEdit();
+  showToast(`"${ssid}" ağ kaydı güncellendi.`, "success");
+  wifiScannedFor = null;
+  scanWifi();
+}
+
+$("wifiEditCloseBtn").onclick = closeWifiEdit;
+$("wifiEditOverlay").onclick = closeWifiEdit;
+$("wifiEditSave").onclick = saveWifiEdit;
+$("wifiEditForget").onclick = () => {
+  if (!wifiEditTarget) return;
+  const ssid = wifiEditTarget.ssid;
+  closeWifiEdit();
+  forgetWifi(ssid);
+};
+// Kayıtlı parola yalnızca burada, açık istek üzerine sunucudan çekilir.
+$("wifiEditShow").onchange = async (e) => {
+  const field = $("wifiEditPassword");
+  if (!e.target.checked) { field.type = "password"; return; }
+  field.type = "text";
+  if (field.value || !wifiEditTarget) return;
+  try {
+    const res = await api(`/api/wifi/secret?ssid=${encodeURIComponent(wifiEditTarget.ssid)}`);
+    field.value = res.password || "";
+  } catch (_) { /* kayıtlı parola yoksa alan boş kalır */ }
+};
+$("wifiEditPassword").onkeydown = (e) => { if (e.key === "Enter") saveWifiEdit(); };
+
+// Bağlantı kurulduktan sonra "Bağlandı" etiketinin ve kayıtlı rozetlerinin
+// güncellenmesi için listeyi tazeler. Association birkaç saniye sürebildiğinden
+// kısa bir gecikmeyle yapılır.
+function refreshWifiAfterConnect() {
+  if (selectedUplinkKind() !== "wifi") return;
+  wifiScannedFor = null;
+  setTimeout(() => scanWifi(), 2500);
+}
+
 $("wifiScanBtn").onclick = () => scanWifi();
+$("wifiHiddenBtn").onclick = () => openWifiAuth("", { hidden: true });
+$("wifiAuthCloseBtn").onclick = closeWifiAuth;
+$("wifiAuthCancel").onclick = closeWifiAuth;
+$("wifiAuthOverlay").onclick = closeWifiAuth;
+$("wifiAuthConnect").onclick = confirmWifiAuth;
+$("wifiAuthPassword").oninput = updateWifiAuthState;
+$("wifiAuthSsidInput").oninput = updateWifiAuthState;
+$("wifiAuthShow").onchange = (e) => {
+  $("wifiAuthPassword").type = e.target.checked ? "text" : "password";
+};
+$("wifiAuthPassword").onkeydown = (e) => { if (e.key === "Enter") confirmWifiAuth(); };
+$("wifiAuthSsidInput").onkeydown = (e) => { if (e.key === "Enter") $("wifiAuthPassword").focus(); };
 
 function updateActionButtons() {
   const running = !["idle", "stopping"].includes(currentPhase);
@@ -484,7 +767,7 @@ function renderState(d) {
 
   // Trafik sayacı (U-6)
   const traffic = st.traffic_rx !== undefined;
-  $("trafficMetric").hidden = !traffic || !currentPhase !== "idle";
+  $("trafficMetric").hidden = !traffic || currentPhase === "idle";
   if (traffic) {
     const total = (st.traffic_rx || 0) + (st.traffic_tx || 0);
     $("mTraffic").textContent = total ? formatBytes(total) : "0 B";
@@ -513,6 +796,9 @@ function renderState(d) {
   if (d.vpns) {
     renderVpnList(d.vpns, st.vpns || [], running);
   }
+
+  // Veri tasarrufu (Faz 1+2+3)
+  renderDataSaver((d.profiles?.[d.active_profile]?.data_saver) || {}, st, running);
 
   const routes = st.relay_targets || [];
   if (st.relay_active) {
@@ -680,6 +966,7 @@ $("startBtn").onclick = () => withBusy(async () => {
     method: "POST", headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
   });
+  refreshWifiAfterConnect();
 });
 
 $("switchBtn").onclick = () => withBusy(async () => {
@@ -694,6 +981,7 @@ $("switchBtn").onclick = () => withBusy(async () => {
     method: "POST", headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
   });
+  refreshWifiAfterConnect();
 });
 
 $("stopBtn").onclick = () => withBusy(async () => {
@@ -751,6 +1039,251 @@ function renderRelayTargets(targets) {
     box.appendChild(el);
   });
 }
+
+// ------------------------------------------------------- Veri tasarrufu
+const LEVEL_LABEL = { light: "Hafif", balanced: "Dengeli", strict: "Katı" };
+const LEVEL_CAP_KBIT = { light: [0, 0], balanced: [2000, 1000], strict: [700, 300] };
+let usageToday = { rx: 0, tx: 0 };
+let usageMonth = { rx: 0, tx: 0 };
+let dataSaverQuotaFocused = false;
+let dataSaverCapDownFocused = false;
+let dataSaverCapUpFocused = false;
+let lastDataSaver = {};
+
+function renderDataSaver(ds, st, running) {
+  lastDataSaver = ds || {};
+  const enabled = !!ds.enabled;
+  $("dataSaverToggle").checked = enabled;
+  $("dataSaverToggle").disabled = busy;
+  const level = ds.level || "balanced";
+  document.querySelectorAll("#dataSaverLevels .level-chip").forEach((b) => {
+    b.classList.toggle("active", b.dataset.level === level);
+    b.disabled = busy;
+  });
+  $("dataSaverHint").textContent = enabled
+    ? `Açık (${LEVEL_LABEL[level] || level}) — daemon prob trafiği kısıldı.`
+    : "Kapalı — daemon prob trafiği normal sıklıkta.";
+
+  const sessionTotal = (st.traffic_rx || 0) + (st.traffic_tx || 0);
+  $("dsSession").textContent = running ? formatBytes(sessionTotal) : "—";
+  const rate = (st.traffic_rate_rx || 0) + (st.traffic_rate_tx || 0);
+  $("dsRate").textContent = running && rate ? formatBytes(rate) + "/s" : "—";
+
+  if (!dataSaverQuotaFocused) {
+    $("dataSaverQuota").value = ds.quota_mb || "";
+  }
+  $("dataSaverKillswitch").checked = ds.quota_action === "killswitch";
+
+  const restartBtn = $("dataSaverRestartAppsBtn");
+  restartBtn.disabled = busy || !running || !(st.apps || []).some((a) => a.running);
+
+  renderMediaLevel(ds, st, running);
+
+  if (!dataSaverCapDownFocused) $("dataSaverCapDown").value = ds.cap_down_kbit || "";
+  if (!dataSaverCapUpFocused) $("dataSaverCapUp").value = ds.cap_up_kbit || "";
+  renderDataSaverShapingText(ds, st, level);
+
+  renderDataSaverUsage();
+}
+
+// Medya kademesi: sürgü konumu <-> sunucu değeri eşlemesi (soldan sağa).
+const MEDIA_LEVELS = ["off", "144p", "360p", "720p", "blocked"];
+const MEDIA_LEVEL_HINT = {
+  off: "Sınırsız — video/müzik kısıtlaması yok.",
+  "144p": "En düşük kalite — bant genişliği ~0,4 Mbit/s ile sınırlı.",
+  "360p": "Düşük kalite — bant genişliği ~1 Mbit/s ile sınırlı.",
+  "720p": "Orta kalite — bant genişliği ~3 Mbit/s ile sınırlı.",
+  blocked: "Kapalı — video/ses hiç inmez (yeni açılan tarayıcılarda etkili).",
+};
+let mediaSliderDragging = false;
+
+function renderMediaLevel(ds, st, running) {
+  const level = MEDIA_LEVELS.includes(ds.media_level) ? ds.media_level : "off";
+  const idx = MEDIA_LEVELS.indexOf(level);
+  const slider = $("mediaLevelSlider");
+  // Kullanıcı sürüklerken poll'un değeri geri almasını engelle.
+  if (!mediaSliderDragging) slider.value = String(idx);
+  slider.disabled = busy;
+  $("mediaBlockHint").textContent = MEDIA_LEVEL_HINT[level];
+  highlightMediaLabel(mediaSliderDragging ? Number(slider.value) : idx);
+  renderMediaStaleWarning(level, st, running);
+}
+
+// Tarayıcı bayrakları/user.js YALNIZCA başlatma anında uygulanabilir. Kullanıcı
+// sürgüyü çalışan bir tarayıcı varken değiştirirse o örnek eski ayarda kalır ve
+// "kapalı dedim ama video hâlâ oynuyor" durumu oluşur. Bunu sessizce geçmek
+// yerine açıkça söyleyip tek tıkla çözüm sunuyoruz.
+function renderMediaStaleWarning(level, st, running) {
+  const warn = $("mediaStaleWarn");
+  const apps = (st.apps || []).filter((a) => a.running);
+  // Yalnızca SERT engelin (Kapalı) tarayıcı tarafı vardır; 144p/360p/720p bant
+  // genişliği tavanıyla çalışır ve canlı oturuma anında uygulanır.
+  const browserSideMatters = (lv) => lv === "blocked";
+  const stale = apps.filter((a) => {
+    const launched = a.media_level || "off";
+    if (launched === level) return false;
+    return browserSideMatters(level) || browserSideMatters(launched);
+  });
+  if (!running || stale.length === 0) {
+    warn.hidden = true;
+    return;
+  }
+  warn.hidden = false;
+  const names = [...new Set(stale.map((a) => a.command.split(/[\s/]/).pop()))].join(", ");
+  $("mediaStaleText").textContent = level === "blocked"
+    ? `“${names}” bu ayar seçilmeden önce açıldı; video engeli o pencerede geçerli değil.`
+    : `“${names}” video engeli açıkken başlatıldı; o pencerede video hâlâ engelli.`;
+  $("mediaStaleApplyBtn").disabled = busy;
+}
+
+function highlightMediaLabel(idx) {
+  document.querySelectorAll(".media-range-labels span").forEach((el) => {
+    el.classList.toggle("active", Number(el.dataset.idx) === idx);
+  });
+}
+
+function renderDataSaverShapingText(ds, st, level) {
+  const el = $("dataSaverCapText");
+  if (!ds.enabled) {
+    el.textContent = "";
+    return;
+  }
+  const [defDown, defUp] = LEVEL_CAP_KBIT[level] || [0, 0];
+  const down = ds.cap_down_kbit || defDown;
+  const up = ds.cap_up_kbit || defUp;
+  if (!down && !up) {
+    el.textContent = "Bu seviyede bant genişliği tavanı yok (sınırsız).";
+    return;
+  }
+  const wanted = [down ? `↓${down}` : null, up ? `↑${up}` : null].filter(Boolean).join(" / ") + " kbit/s";
+  if (!st.shaping_active) {
+    el.textContent = `Hedef: ${wanted} — henüz uygulanmadı (oturum/uplink bekleniyor).`;
+    return;
+  }
+  const applied = [
+    st.shaping_down_kbit ? `↓${st.shaping_down_kbit}kbit/s (${st.shaping_method || "?"})` : null,
+    st.shaping_up_kbit ? `↑${st.shaping_up_kbit}kbit/s` : null,
+  ].filter(Boolean).join(" · ");
+  el.textContent = `Uygulanan: ${applied || "—"}`;
+}
+
+function renderDataSaverUsage() {
+  $("dsToday").textContent = formatBytes((usageToday.rx || 0) + (usageToday.tx || 0));
+  $("dsMonth").textContent = formatBytes((usageMonth.rx || 0) + (usageMonth.tx || 0));
+  const quota = lastDataSaver.quota_mb || 0;
+  const bar = $("dataSaverQuotaBar");
+  if (quota > 0) {
+    const usedMb = ((usageMonth.rx || 0) + (usageMonth.tx || 0)) / 1_000_000;
+    const pct = Math.min(100, (usedMb / quota) * 100);
+    bar.hidden = false;
+    $("dataSaverQuotaFill").style.width = pct.toFixed(0) + "%";
+    $("dataSaverQuotaFill").classList.toggle("danger", pct >= 100);
+    $("dataSaverQuotaFill").classList.toggle("warn", pct >= 80 && pct < 100);
+    $("dataSaverQuotaText").textContent = `${usedMb.toFixed(0)} / ${quota} MB (%${pct.toFixed(0)})`;
+  } else {
+    bar.hidden = true;
+    $("dataSaverQuotaText").textContent = "";
+  }
+}
+
+async function pollUsage() {
+  try {
+    const u = await api("/api/usage");
+    usageToday = u.today || { rx: 0, tx: 0 };
+    usageMonth = u.month || { rx: 0, tx: 0 };
+    renderDataSaverUsage();
+  } catch (_) {
+    // sessiz geç — ana poll zaten bağlantı durumunu gösteriyor
+  }
+}
+
+$("dataSaverToggle").onchange = (e) => withBusy(async () => {
+  await api("/api/data-saver", {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ enabled: e.target.checked }),
+  });
+});
+
+// Sürüklerken yalnızca etiketi güncelle; sunucuya ancak bırakılınca yaz
+// (aksi halde 0→3 arası her ara kademe için istek gider).
+$("mediaLevelSlider").oninput = (e) => {
+  mediaSliderDragging = true;
+  highlightMediaLabel(Number(e.target.value));
+  const lvl = MEDIA_LEVELS[Number(e.target.value)] || "off";
+  $("mediaBlockHint").textContent = MEDIA_LEVEL_HINT[lvl];
+};
+
+$("mediaLevelSlider").onchange = (e) => {
+  const media_level = MEDIA_LEVELS[Number(e.target.value)] || "off";
+  withBusy(async () => {
+    await api("/api/data-saver", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ media_level }),
+    });
+  }).finally(() => { mediaSliderDragging = false; });
+};
+
+document.querySelectorAll("#dataSaverLevels .level-chip").forEach((btn) => {
+  btn.onclick = () => withBusy(async () => {
+    await api("/api/data-saver", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ level: btn.dataset.level }),
+    });
+  });
+});
+
+$("dataSaverQuota").onfocus = () => { dataSaverQuotaFocused = true; };
+$("dataSaverQuota").onblur = () => { dataSaverQuotaFocused = false; };
+
+$("dataSaverQuotaSaveBtn").onclick = () => withBusy(async () => {
+  const raw = $("dataSaverQuota").value.trim();
+  const quota_mb = raw ? parseInt(raw, 10) : 0;
+  if (raw && (!Number.isFinite(quota_mb) || quota_mb < 0)) {
+    throw new Error("Geçersiz kota değeri.");
+  }
+  await api("/api/data-saver", {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      quota_mb,
+      quota_action: $("dataSaverKillswitch").checked ? "killswitch" : "warn",
+    }),
+  });
+  showToast("Kota kaydedildi.", "info");
+});
+
+$("dataSaverCapDown").onfocus = () => { dataSaverCapDownFocused = true; };
+$("dataSaverCapDown").onblur = () => { dataSaverCapDownFocused = false; };
+$("dataSaverCapUp").onfocus = () => { dataSaverCapUpFocused = true; };
+$("dataSaverCapUp").onblur = () => { dataSaverCapUpFocused = false; };
+
+function _parseCapField(id) {
+  const raw = $(id).value.trim();
+  if (!raw) return 0;
+  const n = parseInt(raw, 10);
+  if (!Number.isFinite(n) || n < 0) throw new Error("Geçersiz tavan değeri.");
+  return n;
+}
+
+$("dataSaverCapSaveBtn").onclick = () => withBusy(async () => {
+  const cap_down_kbit = _parseCapField("dataSaverCapDown");
+  const cap_up_kbit = _parseCapField("dataSaverCapUp");
+  await api("/api/data-saver", {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ cap_down_kbit, cap_up_kbit }),
+  });
+  showToast("Bant genişliği tavanı kaydedildi.", "info");
+});
+
+$("mediaStaleApplyBtn").onclick = () => $("dataSaverRestartAppsBtn").click();
+
+$("dataSaverRestartAppsBtn").onclick = () => withBusy(async () => {
+  if (!confirm("Açık uygulamalar kapatılıp aynı listeyle yeniden başlatılacak. Devam edilsin mi?"))
+    return;
+  const r = await api("/api/apps/restart-all", {
+    method: "POST", headers: { "Content-Type": "application/json" },
+  });
+  showToast(`${(r.started || []).length} uygulama yeniden başlatıldı.`, "info");
+});
 
 function closeNetPicker() { $("netPicker").hidden = true; }
 
@@ -905,10 +1438,10 @@ $("speedTestBtn").onclick = () => withBusy(async () => {
 });
 
 $("restartBtn").onclick = async () => {
-  if (!confirm("Uygulama arka plan servisleriyle (izole oturum, relay, VPN) " +
-               "birlikte yeniden başlatılsın mı?\n\nÇalışan izole uygulamalar " +
-               "ağ bağlantısını kaybedecek; panel birkaç saniye içinde kendini " +
-               "otomatik olarak yeniden açacak."))
+  if (!confirm("Her şey sıfırlansın mı?\n\nİzole oturum, çalışan uygulamalar, relay " +
+               "ve VPN TAMAMEN durdurulacak; ardından uygulama temiz bir durumla " +
+               "yeniden başlayacak. Panel birkaç saniye içinde kendini yeniden açar.\n\n" +
+               "(Oturumu korumak için 'Durdur' yerine 'Çıkış' kullan.)"))
     return;
   try {
     await api("/api/restart", { method: "POST", headers: { "Content-Type": "application/json" } });
@@ -965,7 +1498,9 @@ document.addEventListener("keydown", (e) => {
     e.preventDefault();
     togglePalette();
   }
-  if (e.key === "Escape") { closePalette(); closeAppPicker(); closeNetPicker(); }
+  if (e.key === "Escape") {
+    closePalette(); closeAppPicker(); closeNetPicker(); closeWifiAuth(); closeWifiEdit();
+  }
 });
 
 function togglePalette() {
@@ -992,6 +1527,18 @@ function filterPalette(query) {
     { label: "Durdur", action: () => $("stopBtn").click(), shortcut: "" },
     { label: "Relay aç", action: () => { if (!$("relayToggle").disabled) { $("relayToggle").checked = true; $("relayToggle").dispatchEvent(new Event("change")); } }, shortcut: "" },
     { label: "Relay kapat", action: () => { if (!$("relayToggle").disabled) { $("relayToggle").checked = false; $("relayToggle").dispatchEvent(new Event("change")); } }, shortcut: "" },
+    { label: "Veri tasarrufu aç", action: () => { if (!$("dataSaverToggle").disabled) { $("dataSaverToggle").checked = true; $("dataSaverToggle").dispatchEvent(new Event("change")); } }, shortcut: "" },
+    { label: "Veri tasarrufu kapat", action: () => { if (!$("dataSaverToggle").disabled) { $("dataSaverToggle").checked = false; $("dataSaverToggle").dispatchEvent(new Event("change")); } }, shortcut: "" },
+    ...MEDIA_LEVELS.map((lvl, i) => ({
+      label: "Video/müzik: " + ["sınırsız", "144p", "360p", "720p", "kapalı"][i],
+      action: () => {
+        const s = $("mediaLevelSlider");
+        if (s.disabled) return;
+        s.value = String(i);
+        s.dispatchEvent(new Event("change"));
+      },
+      shortcut: "",
+    })),
     { label: "Yeniden bağlan", action: () => $("reconnectBtn").click(), shortcut: "" },
     { label: "VPN içe aktar", action: () => { if (!$("addVpnBtn").disabled) $("addVpnBtn").click(); }, shortcut: "" },
     { label: "Hız testi", action: () => $("speedTestBtn").click(), shortcut: "" },
@@ -1027,4 +1574,6 @@ document.querySelectorAll(".filter-chip").forEach(chip => {
 
 // ----------------------------------------------------------------- başlat
 poll();
+pollUsage();
+setInterval(pollUsage, 15000);
 const pollTimer = setInterval(poll, 2000);

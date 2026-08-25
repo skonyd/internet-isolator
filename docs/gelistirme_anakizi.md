@@ -346,13 +346,23 @@ Efor: **S (küçük, <yarım gün) · M (orta) · L (büyük)**.
 - **Uygulama:** systemd-logind `PrepareForSleep` D-Bus sinyalini dinle (ya da resume sonrası
   watchdog agresif reconcile); uplink/DHCP/VPN/relay durumunu otomatik onar.
 
-### H-5 ✅ WiFi SSID tarama — S
+### H-5 ✅ WiFi ağ seçici (Ubuntu/GNOME ağ ekranı) — S
 - **Neden:** SSID elle yazılıyor; hataya açık.
-- **Uygulama:** `system.wifi_scan()` (`iw dev <if> scan`, root) → SSID + sinyal listesi;
-  `GET /api/wifi/scan?iface=` ucu; kayıtlı ağlar `Settings.wifi_networks`'te SSID→parola
-  olarak kalıcı (profil bağımsız, Ubuntu ağ menüsü mantığı); UI'de tıklanabilir ağ listesi
-  (`webui/index.html` + `app.js`, kayıtlı ağlar 🔑 rozetiyle, parola alanı yalnızca
-  kayıtsız ağ seçilince görünür).
+- **Tarama:** `system.wifi_scan()` (`iw dev <if> scan`, root; EBUSY'de 3 kez yeniden dener,
+  gerçek hata mesajını UI'ye taşır) + `system.wifi_current_ssid()` (`iw dev <if> link`).
+  Uç: `GET /api/wifi/scan?iface=`. Arayüz izole alana taşınmışsa tarama `ip netns exec`
+  ile orada yapılır.
+- **Kayıtlı ağlar:** `Settings.wifi_networks` (SSID→parola), profil bağımsız ve kalıcı.
+  Parola boş bırakılırsa kayıtlı olan kullanılır; yeni girilen otomatik hatırlanır.
+- **Düzenleme:** `POST /api/wifi/save` (parola değiştir + SSID yeniden adlandır, ağı kullanan
+  profilleri senkron tutar), `POST /api/wifi/forget`, `GET /api/wifi/secret?ssid=` (kayıtlı
+  parolayı YALNIZCA "parolayı göster" isteğinde döndürür — tarama/durum yüklerinde parola
+  asla gönderilmez).
+- **UI:** GNOME ağ ekranı birebir — satırlı kart, 4 seviyeli SVG sinyal yayları, kilit/✓
+  rozetleri, bağlı ağ en üstte "Bağlandı" etiketiyle, kayıtlı ağlarda ⚙ ile açılan ağ
+  ayarları penceresi (SSID/parola düzenleme + "Bu ağı unut"), GNOME'daki
+  "Authentication Required" muadili parola penceresi (parolayı göster, 8 karakter kuralı),
+  "Gizli ağa bağlan…" ve tarama göstergesi.
 
 ### H-6 🟡 Panelden profil oluştur/düzenle/sil (UI) — M
 - **Neden:** API (`/api/profile`) hazır, UI formu yok. İçe/dışa aktarma ile taşınabilirlik.

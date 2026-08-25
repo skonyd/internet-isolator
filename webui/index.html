@@ -66,6 +66,74 @@
     </div>
   </div>
 
+  <!-- WI-FI KİMLİK DOĞRULAMA (GNOME "Authentication Required" muadili) -->
+  <div id="wifiAuth" class="command-palette" hidden>
+    <div id="wifiAuthOverlay" class="cp-overlay"></div>
+    <div class="cp-box">
+      <div class="cp-header">
+        <span class="cp-title">WI-FI KİMLİK DOĞRULAMA</span>
+        <button id="wifiAuthCloseBtn" class="btn ghost-btn btn-sm cp-close" type="button">✕ Kapat (Esc)</button>
+      </div>
+      <div class="wifi-auth-body">
+        <p class="wifi-auth-text">
+          <b id="wifiAuthSsid"></b> ağına erişmek için parola gerekli.
+        </p>
+        <div id="wifiAuthSsidRow" class="wifi-auth-field" hidden>
+          <label class="field-label" for="wifiAuthSsidInput">Ağ adı (SSID)</label>
+          <input type="text" id="wifiAuthSsidInput" class="text-input" placeholder="Gizli ağın adı" autocomplete="off" spellcheck="false">
+        </div>
+        <div class="wifi-auth-field">
+          <label class="field-label" for="wifiAuthPassword">Parola</label>
+          <input type="password" id="wifiAuthPassword" class="text-input" placeholder="Ağ parolası" autocomplete="off">
+        </div>
+        <label class="checkbox-row wifi-auth-show">
+          <input type="checkbox" id="wifiAuthShow">
+          <span>Parolayı göster</span>
+        </label>
+        <p class="wifi-auth-error" id="wifiAuthError" hidden></p>
+      </div>
+      <div class="cp-footer wifi-auth-actions">
+        <button id="wifiAuthCancel" class="btn ghost-btn" type="button">İptal</button>
+        <button id="wifiAuthConnect" class="btn primary" type="button">Bağlan</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- KAYITLI AĞ AYARLARI (GNOME ağ ayarları penceresi muadili) -->
+  <div id="wifiEdit" class="command-palette" hidden>
+    <div id="wifiEditOverlay" class="cp-overlay"></div>
+    <div class="cp-box">
+      <div class="cp-header">
+        <span class="cp-title">AĞ AYARLARI</span>
+        <button id="wifiEditCloseBtn" class="btn ghost-btn btn-sm cp-close" type="button">✕ Kapat (Esc)</button>
+      </div>
+      <div class="wifi-auth-body">
+        <dl class="detail wifi-edit-info">
+          <div><dt>Güvenlik</dt><dd id="wifiEditSecurity">—</dd></div>
+          <div><dt>Sinyal</dt><dd id="wifiEditSignal">—</dd></div>
+          <div><dt>Durum</dt><dd id="wifiEditStatus">—</dd></div>
+        </dl>
+        <div class="wifi-auth-field">
+          <label class="field-label" for="wifiEditSsid">Ağ adı (SSID)</label>
+          <input type="text" id="wifiEditSsid" class="text-input" autocomplete="off" spellcheck="false">
+        </div>
+        <div class="wifi-auth-field">
+          <label class="field-label" for="wifiEditPassword">Parola</label>
+          <input type="password" id="wifiEditPassword" class="text-input" placeholder="Değiştirmemek için boş bırakın" autocomplete="off">
+        </div>
+        <label class="checkbox-row wifi-auth-show">
+          <input type="checkbox" id="wifiEditShow">
+          <span>Kayıtlı parolayı göster</span>
+        </label>
+        <p class="wifi-auth-error" id="wifiEditError" hidden></p>
+      </div>
+      <div class="cp-footer wifi-edit-actions">
+        <button id="wifiEditForget" class="btn danger" type="button">Bu ağı unut</button>
+        <button id="wifiEditSave" class="btn primary" type="button">Kaydet</button>
+      </div>
+    </div>
+  </div>
+
   <div class="titlebar">
     <div class="brand">
       <span class="logo">🛡️</span>
@@ -78,8 +146,8 @@
       <span id="rootBadge" class="badge">—</span>
       <span id="versionBadge" class="badge ghost">v—</span>
       <button id="themeToggle" class="theme-btn" title="Temayı değiştir (U-15)">🌓</button>
-      <button id="restartBtn" class="quit-btn" title="Uygulamayı ve arka plan servislerini yeniden başlat">⟳ Yeniden Başlat</button>
-      <button id="quitBtn" class="quit-btn" title="Uygulamayı kapat">Çıkış</button>
+      <button id="restartBtn" class="quit-btn" title="Her şeyi sıfırla — izole oturum, uygulamalar, relay ve VPN durdurulur, uygulama temiz başlar (güncel kodu da yükler)">⟳ Yeniden Başlat</button>
+      <button id="quitBtn" class="quit-btn" title="Paneli kapat — izole oturum arka planda çalışmaya devam eder">Çıkış</button>
     </div>
   </div>
 
@@ -125,15 +193,19 @@
         <div id="uplinkList" class="chip-list"></div>
 
         <div id="wifiCreds" class="wifi-creds" hidden>
-          <div style="display:flex; align-items:center; justify-content:space-between; gap:8px; margin-bottom:4px">
-            <label class="field-label" style="margin:0">WiFi ağları</label>
-            <button id="wifiScanBtn" class="icon-refresh-btn" type="button" title="Ağları tara">↻</button>
+          <div class="wifi-head">
+            <label class="field-label wifi-head-label">Wi-Fi Ağları</label>
+            <div class="wifi-head-actions">
+              <span id="wifiSpinner" class="wifi-spinner" hidden></span>
+              <button id="wifiScanBtn" class="icon-refresh-btn" type="button" title="Ağları yeniden tara">↻</button>
+            </div>
           </div>
-          <div id="wifiNetworkList" class="chip-list wifi-network-list"></div>
+          <div id="wifiNetworkList" class="wifi-list"></div>
+          <button id="wifiHiddenBtn" class="btn ghost-btn btn-sm wifi-hidden-btn" type="button">
+            Gizli ağa bağlan…
+          </button>
           <input type="hidden" id="wifiSsid">
-          <label class="field-label" id="wifiPasswordLabel" hidden>"<span id="wifiPasswordSsid"></span>" parolası</label>
-          <input type="password" id="wifiPassword" class="text-input" placeholder="Parola" autocomplete="off" hidden>
-          <p class="muted hint-sm">Daha önce bağlanılan ağların parolası bu cihazda hatırlanır; tekrar girmene gerek yok.</p>
+          <input type="password" id="wifiPassword" class="wifi-store-input" autocomplete="off" tabindex="-1" aria-hidden="true">
         </div>
 
         <label class="field-label">Başlatılacak uygulamalar</label>
@@ -183,6 +255,91 @@
         <!-- HIZ TESTİ (U-7) -->
         <button id="speedTestBtn" class="btn ghost-btn" disabled>⚡ Hız testi</button>
         <div id="speedTestResult" class="speed-test-result" hidden></div>
+
+        <div class="relay-box" id="dataSaverBox">
+          <div class="relay-head">
+            <div>
+              <h4>Veri Tasarrufu</h4>
+              <p class="muted" id="dataSaverHint">Kapalı — daemon prob trafiği normal sıklıkta.</p>
+            </div>
+            <label class="switch">
+              <input type="checkbox" id="dataSaverToggle">
+              <span class="slider"></span>
+            </label>
+          </div>
+          <p class="muted hint-sm" style="margin-top:12px">Uplink zaten fiziksel olarak izole; bu anahtar host trafiğine
+            dokunmaz. Açıldığında daemon'un kendi kontrol trafiğini (bağlantı probu, dış IP sorgusu, hız testi boyutu) kısar
+            VE tarayıcılara otomatik oynatma/arka plan senkron/prefetch'i kapatan, disk önbelleğini büyüten ayarlar verir.</p>
+          <div class="chip-list" id="dataSaverLevels" style="margin-top:12px">
+            <button class="level-chip" type="button" data-level="light">Hafif</button>
+            <button class="level-chip active" type="button" data-level="balanced">Dengeli</button>
+            <button class="level-chip" type="button" data-level="strict">Katı</button>
+          </div>
+          <p class="muted hint-sm" style="margin-top:8px">Tarayıcı ayarları yalnızca <b>yeni açılan</b> uygulamalarda etkilidir.
+            Zaten açık olanlara uygulamak için:</p>
+          <button id="dataSaverRestartAppsBtn" class="btn ghost-btn btn-sm" type="button" disabled>⟳ Açık uygulamaları yeniden başlat</button>
+
+          <div style="margin-top:16px; padding-top:16px; border-top:1px solid var(--line)">
+            <h4 style="font-size:14px; margin:0">Video/müzik kalitesi</h4>
+            <p class="muted hint-sm" id="mediaBlockHint">Kapalı.</p>
+            <div class="media-range-wrap">
+              <input type="range" id="mediaLevelSlider" class="media-range"
+                     min="0" max="4" step="1" value="0">
+              <div class="media-range-ticks" aria-hidden="true">
+                <i></i><i></i><i></i><i></i><i></i>
+              </div>
+              <div class="media-range-labels">
+                <span data-idx="0">Sınırsız</span>
+                <span data-idx="1">144p</span>
+                <span data-idx="2">360p</span>
+                <span data-idx="3">720p</span>
+                <span data-idx="4">Kapalı</span>
+              </div>
+            </div>
+            <div id="mediaStaleWarn" class="media-stale-warn" hidden>
+              <span class="media-stale-text" id="mediaStaleText"></span>
+              <button id="mediaStaleApplyBtn" class="btn ghost-btn btn-sm" type="button">⟳ Şimdi uygula</button>
+            </div>
+          </div>
+          <p class="muted hint-sm"><b>360p / 720p</b> — tarayıcıya "şu kaliteyi oynat" diyen bir arayüz
+            olmadığından, kalite <b>bant genişliği tavanıyla</b> düşürülür: YouTube/Netflix gibi uyarlanabilir
+            oynatıcılar ölçtükleri hıza göre çözünürlüğü kendileri indirir. Tavan <b>tüm izole trafiği</b>
+            etkiler (yalnızca videoyu değil) ve anında uygulanır; gerçek çözünürlük siteye göre bir kademe
+            oynayabilir.<br>
+            <b>Kapalı</b> — tam engel: Firefox'ta oynatma altyapısı (MediaSource) API seviyesinde kapatılır;
+            Chrome/Opera/Brave'de MediaSource kapatılamadığı için tarayıcının <b>kendi ad çözümleyicisi</b>
+            medya CDN'lerini ölü adrese yönlendirir (sistem DNS'ine dokunulmaz). Site/arayüz normal açılır,
+            yalnızca video/ses inmez — ama bu kademe yalnızca <b>yeni açılan</b> tarayıcılarda etkilidir
+            (açık olanlar için yukarıdaki "yeniden başlat" düğmesini kullan).<br>
+            Genel veri tasarrufu anahtarından <b>bağımsız</b> çalışır.</p>
+
+          <label class="field-label" style="margin-top:14px">Bant genişliği tavanı (opsiyonel, seviyeyi geçersiz kılar)</label>
+          <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap">
+            <input type="number" id="dataSaverCapDown" class="text-input" placeholder="↓ kbit/s, boş=seviyeden" min="0" step="100" style="max-width:180px">
+            <input type="number" id="dataSaverCapUp" class="text-input" placeholder="↑ kbit/s, boş=seviyeden" min="0" step="100" style="max-width:180px">
+            <button id="dataSaverCapSaveBtn" class="btn ghost-btn btn-sm" type="button">Kaydet</button>
+          </div>
+          <p class="muted hint-sm" id="dataSaverCapText"></p>
+
+          <div class="hero-metrics" style="margin-top:14px">
+            <div class="metric"><label>Bu oturum</label><b id="dsSession">—</b></div>
+            <div class="metric"><label>Hız</label><b id="dsRate">—</b></div>
+            <div class="metric"><label>Bugün</label><b id="dsToday">—</b></div>
+            <div class="metric"><label>Bu ay</label><b id="dsMonth">—</b></div>
+          </div>
+
+          <label class="field-label" style="margin-top:14px">Aylık kota (opsiyonel)</label>
+          <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap">
+            <input type="number" id="dataSaverQuota" class="text-input" placeholder="ör. 5000 (MB)" min="0" step="100" style="max-width:160px">
+            <label class="checkbox-row" style="margin:0">
+              <input type="checkbox" id="dataSaverKillswitch">
+              <span>Aşılınca kill-switch uygula</span>
+            </label>
+            <button id="dataSaverQuotaSaveBtn" class="btn ghost-btn btn-sm" type="button">Kaydet</button>
+          </div>
+          <div id="dataSaverQuotaBar" class="quota-bar" hidden><div id="dataSaverQuotaFill" class="quota-bar-fill"></div></div>
+          <p class="muted hint-sm" id="dataSaverQuotaText"></p>
+        </div>
 
         <div class="relay-box">
           <div class="relay-head">

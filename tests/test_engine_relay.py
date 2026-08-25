@@ -167,5 +167,51 @@ class TestRelay(unittest.TestCase):
         self.assertFalse(r.is_active())
 
 
+class TestResolvConf(unittest.TestCase):
+    """İzole alanın resolv.conf'u — telefon hotspot'undaki yavaş DNS düzeltmesi.
+
+    glibc A ve AAAA sorgularını aynı porttan paralel gönderir; basit NAT'lar
+    (iPhone hotspot vb.) ikinci yanıtı düşürünce resolver tam timeout bekler ve
+    HER isim çözümlemesi ~5 sn sürer. Ölçüm (5 taze alan adı, aynı hat):
+    varsayılan 26,8 sn — single-request-reopen 0,87 sn.
+    """
+
+    def setUp(self):
+        self.e = eng.Engine(Settings(), dry_run=False)
+
+    def _write(self, dns):
+        """resolv.conf'a YAZILAN içeriği döndürür (gerçek dosya sistemine dokunmadan)."""
+        opened = mock.mock_open()
+        with mock.patch("builtins.open", opened), \
+             mock.patch.object(eng.os, "makedirs"):
+            self.e._write_resolv(dns)
+        handle = opened()
+        return "".join(c.args[0] for c in handle.write.call_args_list)
+
+    def test_nameservers_written_in_order(self):
+        out = self._write(["8.8.8.8", "1.1.1.1"])
+        self.assertIn("nameserver 8.8.8.8", out)
+        self.assertIn("nameserver 1.1.1.1", out)
+        self.assertLess(out.index("8.8.8.8"), out.index("1.1.1.1"))
+
+    def test_single_request_reopen_option_present(self):
+        """ASIL REGRESYON KORUMASI: bu seçenek düşerse DNS 30 kat yavaşlar."""
+        out = self._write(["8.8.8.8"])
+        self.assertIn("single-request-reopen", out)
+
+    def test_timeout_bounded(self):
+        """Paket yine de kaybolursa 5 sn yerine kısa beklensin (emniyet ağı)."""
+        out = self._write(["8.8.8.8"])
+        self.assertIn("timeout:2", out)
+
+    def test_options_line_comes_after_nameservers(self):
+        out = self._write(["8.8.8.8", "1.1.1.1"])
+        self.assertLess(out.index("nameserver 1.1.1.1"), out.index("options "))
+
+    def test_single_options_line_only(self):
+        out = self._write(["8.8.8.8", "1.1.1.1"])
+        self.assertEqual(out.count("options "), 1)
+
+
 if __name__ == "__main__":
     unittest.main()

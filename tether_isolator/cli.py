@@ -10,7 +10,7 @@ import json
 import logging
 import sys
 
-from . import __version__, apps, system
+from . import __version__, apps, system, usage
 from .config import Settings
 from .manager import Manager
 from .state import RuntimeState
@@ -83,6 +83,27 @@ def cmd_status(args, settings: Settings) -> int:
     print(f"Dış IP    : {data.get('public_ip') or '-'}")
     print(f"Yeniden   : {data.get('reconnect_count', 0)} kez bağlanıldı")
     print(f"Relay     : {'AÇIK ('+data.get('relay_scope','')+')' if data.get('relay_active') else 'kapalı'}")
+    return 0
+
+
+def _fmt_bytes(n: int) -> str:
+    v = float(n)
+    for unit in ("B", "KB", "MB", "GB"):
+        if v < 1024 or unit == "GB":
+            return f"{v:.1f} {unit}"
+        v /= 1024
+    return f"{v:.1f} GB"
+
+
+def cmd_usage(args, settings: Settings) -> int:
+    data = usage.load()
+    if args.json:
+        print(json.dumps(data, indent=2, ensure_ascii=False))
+        return 0
+    rx_t, tx_t = usage.today_bytes(data)
+    rx_m, tx_m = usage.month_bytes(data)
+    print(f"Bugün   : ↓ {_fmt_bytes(rx_t)}  ↑ {_fmt_bytes(tx_t)}  (toplam {_fmt_bytes(rx_t + tx_t)})")
+    print(f"Bu ay   : ↓ {_fmt_bytes(rx_m)}  ↑ {_fmt_bytes(tx_m)}  (toplam {_fmt_bytes(rx_m + tx_m)})")
     return 0
 
 
@@ -264,6 +285,10 @@ def build_parser() -> argparse.ArgumentParser:
     stt = sub.add_parser("status", help="durumu göster")
     stt.add_argument("--json", action="store_true")
     stt.set_defaults(func=cmd_status)
+
+    us = sub.add_parser("usage", help="kalıcı veri kullanımını göster (bugün/bu ay)")
+    us.add_argument("--json", action="store_true")
+    us.set_defaults(func=cmd_usage)
 
     sub.add_parser("doctor", help="ortam sağlık kontrolü (eksik araçlar/tuzaklar)").set_defaults(func=cmd_doctor)
     sub.add_parser("interfaces", help="arayüzleri listele").set_defaults(func=cmd_interfaces)

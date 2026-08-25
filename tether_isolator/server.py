@@ -29,7 +29,7 @@ import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse
 
-from . import __version__, apps, system
+from . import __version__, apps, system, usage
 from .config import Profile, Settings, VPNS_DIR
 from .manager import Manager
 
@@ -234,8 +234,26 @@ class _Handler(BaseHTTPRequestHandler):
             return self._json({"apps": apps.list_desktop_apps()})
         if path == "/api/wifi/saved":
             return self._json({"networks": sorted(self.settings.wifi_networks.keys())})
+        if path.startswith("/api/wifi/secret"):
+            # Kayıtlı parolayı YALNIZCA açık istek üzerine döndürür (ağ ayarları
+            # penceresindeki "Parolayı göster"). Tarama/durum yüklerinde parola
+            # asla gönderilmez; bu yüzden ayrı bir uç tutuluyor.
+            from urllib.parse import parse_qs
+            qs = parse_qs(urlparse(self.path).query)
+            ssid = (qs.get("ssid", [""])[0] or "").strip()
+            if not ssid:
+                return self._json({"error": "ssid gerekli"}, 400)
+            if ssid not in self.settings.wifi_networks:
+                return self._json({"error": "kayıtlı ağ değil"}, 404)
+            return self._json({"password": self.settings.wifi_networks[ssid]})
         if path.startswith("/api/wifi/scan"):
             return self._api_wifi_scan()
+        if path == "/api/usage":
+            data = usage.load()
+            rx_t, tx_t = usage.today_bytes(data)
+            rx_m, tx_m = usage.month_bytes(data)
+            return self._json({"today": {"rx": rx_t, "tx": tx_t},
+                               "month": {"rx": rx_m, "tx": tx_m}})
         return self._json({"error": "bulunamadı"}, 404)
 
     def _api_wifi_scan(self):
@@ -249,6 +267,7 @@ class _Handler(BaseHTTPRequestHandler):
         m, s = self.manager, self.settings
         ns = m.state.namespace if system.interface_in_namespace(s.namespace, iface) else None
         found, err = system.wifi_scan(iface, in_namespace=ns, dry_run=m.dry)
+        current = system.wifi_current_ssid(iface, in_namespace=ns, dry_run=m.dry)
         saved = s.wifi_networks
         networks = [
             {"ssid": n.ssid, "signal": n.signal, "security": n.security,
@@ -262,7 +281,8 @@ class _Handler(BaseHTTPRequestHandler):
             if ssid not in seen:
                 networks.append({"ssid": ssid, "signal": None, "security": "wpa",
                                   "saved": True})
-        return self._json({"networks": networks, "error": err if not networks else ""})
+        return self._json({"networks": networks, "current": current,
+                           "error": err if not networks else ""})
 
     def _status_payload(self) -> dict:
         s = self.settings
@@ -409,6 +429,93 @@ class _Handler(BaseHTTPRequestHandler):
                 m.remove_relay_target(value)
             return self._json({"ok": True, "state": m.snapshot()})
 
+        if path == "/api/data-saver":
+            pname = body.get("profile") or s.active_profile
+            prof = s.profile(pname)
+            if "enabled" in body:
+                prof.data_saver.enabled = bool(body["enabled"])
+            if body.get("level") in ("light", "balanced", "strict"):
+                prof.data_saver.level = body["level"]
+            if "frugal_probes" in body:
+                prof.data_saver.frugal_probes = bool(body["frugal_probes"])
+            if "quota_mb" in body:
+                try:
+                    prof.data_saver.quota_mb = max(0, int(body["quota_mb"]))
+                except (TypeError, ValueError):
+                    return self._json({"error": "quota_mb sayı olmalı"}, 400)
+            if body.get("quota_action") in ("warn", "killswitch"):
+                prof.data_saver.quota_action = body["quota_action"]
+            if "cap_down_kbit" in body:
+                try:
+                    prof.data_saver.cap_down_kbit = max(0, int(body["cap_down_kbit"]))
+                except (TypeError, ValueError):
+                    return self._json({"error": "cap_down_kbit sayı olmalı"}, 400)
+            if "cap_up_kbit" in body:
+                try:
+                    prof.data_saver.cap_up_kbit = max(0, int(body["cap_up_kbit"]))
+                except (TypeError, ValueError):
+                    return self._json({"error": "cap_up_kbit sayı olmalı"}, 400)
+            if body.get("media_level") in ("off", "144p", "360p", "720p", "blocked"):
+                # "blocked" tarayıcı bayrağı/user.js ile gelir → yalnızca YENİ açılan
+                # uygulamada etkili. "360p"/"720p" ise bant genişliği tavanı olduğundan
+                # aşağıdaki reassert_shaping ile canlı oturuma ANINDA uygulanır.
+                prof.data_saver.media_level = body["media_level"]
+            elif "block_media" in body:
+                # Geriye dönük uyumluluk (eski panel/istemci).
+                prof.data_saver.media_level = "blocked" if body["block_media"] else "off"
+            s.save()
+            if prof is m.active_profile:
+                m.reassert_shaping()
+            return self._json({"ok": True, "state": m.snapshot()})
+
+        if path == "/api/apps/restart-all":
+            started = m.restart_apps()
+            return self._json({"ok": True, "started": started, "state": m.snapshot()})
+
+        if path == "/api/wifi/save":
+            # Ubuntu'daki ağ ayarları penceresinin "Uygula"sı: kayıtlı bir ağın
+            # parolasını değiştirir ve/veya SSID'sini yeniden adlandırır.
+            ssid = (body.get("ssid") or "").strip()
+            old = (body.get("old_ssid") or "").strip()
+            password = body.get("password") or ""
+            if not ssid:
+                return self._json({"error": "ssid gerekli"}, 400)
+            # Parola boş bırakıldıysa mevcut kayıtlı parola korunur (yeniden
+            # adlandırmada eski kayıttan devralınır).
+            if not password:
+                password = s.wifi_networks.get(old or ssid, "")
+            if not password:
+                return self._json({"error": "parola gerekli"}, 400)
+            if len(password) < 8:
+                return self._json({"error": "WPA parolası en az 8 karakter olmalı"}, 400)
+            if old and old != ssid:
+                s.wifi_networks.pop(old, None)
+            s.wifi_networks[ssid] = password
+            # Bu ağı kullanan profilleri de senkron tut; aksi halde profil eski
+            # SSID/parolayla bağlanmayı denemeye devam ederdi.
+            for prof in s.profiles.values():
+                if prof.wifi_ssid == (old or ssid):
+                    prof.wifi_ssid = ssid
+                    prof.wifi_password = password
+            s.save()
+            return self._json({"ok": True})
+
+        if path == "/api/wifi/forget":
+            # Ubuntu'daki "Bu ağı unut": kayıtlı parolayı siler; ağ taramada
+            # görünmeye devam eder ama bir daha otomatik bağlanılmaz.
+            ssid = (body.get("ssid") or "").strip()
+            if not ssid:
+                return self._json({"error": "ssid gerekli"}, 400)
+            s.wifi_networks.pop(ssid, None)
+            # Bu SSID'yi kullanan profillerdeki kayıtlı parolayı da temizle;
+            # aksi halde "unutuldu" denen ağa profil üzerinden bağlanmaya devam
+            # edilebilirdi.
+            for prof in s.profiles.values():
+                if prof.wifi_ssid == ssid:
+                    prof.wifi_password = ""
+            s.save()
+            return self._json({"ok": True})
+
         if path == "/api/vpn":
             name = body.get("name")
             if not name:
@@ -490,7 +597,15 @@ class _Handler(BaseHTTPRequestHandler):
             ns = m.state.namespace
             if not ns:
                 return self._json({"error": "Oturum aktif değil"}, 400)
-            cmd = ["ip", "netns", "exec", ns, "curl", "-s", "-w", "%{speed_download}", "-o", "/dev/null", "https://speed.cloudflare.com/__down?bytes=10000000"]
+            # Veri tasarrufu açıksa hız testinin kendi indirmesini küçült
+            # (varsayılan 10 MB, seviyeye göre 5/2/1 MB'a düşer).
+            test_bytes = 10_000_000
+            prof = m.active_profile
+            if prof and prof.data_saver.enabled:
+                test_bytes = {"light": 5_000_000, "balanced": 2_000_000,
+                             "strict": 1_000_000}.get(prof.data_saver.level, 2_000_000)
+            url = f"https://speed.cloudflare.com/__down?bytes={test_bytes}"
+            cmd = ["ip", "netns", "exec", ns, "curl", "-s", "-w", "%{speed_download}", "-o", "/dev/null", url]
             try:
                 import subprocess
                 res = subprocess.run(cmd, capture_output=True, text=True, timeout=20)
@@ -530,11 +645,20 @@ class _Handler(BaseHTTPRequestHandler):
             return None
 
         if path == "/api/restart":
-            # Yeniden başlat = izole oturumu ve arka plan servislerini (relay,
-            # watchdog, DHCP/wpa_supplicant vb.) tam olarak durdurup daemon
-            # sürecini kendi üzerine yeniden başlatır (execv). "Çıkış"tan farkı:
-            # burada oturum da teardown edilir VE daemon otomatik olarak
-            # yeniden ayağa kalkar (kullanıcının paneli tekrar açması gerekmez).
+            # Yeniden başlat = TAM SIFIRLAMA. İzole oturum (namespace, uplink,
+            # uygulamalar, relay, VPN) tamamen yıkılır, arka plan servisleri
+            # (watchdog, DHCP/wpa_supplicant) durdurulur, sonra daemon süreci
+            # kendi üzerine yeniden başlatılır (execv) ve TEMİZ bir durumla
+            # açılır. Üç eylemin farkı:
+            #   Çıkış          → paneli kapat, oturum arka planda YAŞAR
+            #   Durdur         → oturumu yık, daemon çalışmaya devam eder
+            #   Yeniden Başlat → oturumu yık VE daemon'ı tazele (sıfırdan başla)
+            #
+            # execv ayrıca diskteki GÜNCEL kodu yükler: Python modülleri süreç
+            # başlarken import edilir, dolayısıyla kaynak dosyalar değiştiğinde
+            # yeni mantığın etkin olması için bu yol (ya da tam yeniden başlatma)
+            # gerekir — panel HTML/JS'i her istekte diskten okunduğu için tek
+            # başına güncellenmiş görünür ama Python tarafı eski kalabilir.
             try:
                 m.stop_session()
             except Exception:  # noqa: BLE001
@@ -546,12 +670,18 @@ class _Handler(BaseHTTPRequestHandler):
             # ölmeyebilir). Kendi PID'imiz her zaman hariç tutulur.
             try:
                 my_pid = os.getpid()
+                # Kendi ata zincirimizi koru: daemon `pkexec env ... python3 -m
+                # tether_isolator gui` ile başlatılır ve bu sarmalayıcının komut
+                # satırı da desene UYAR. Onu öldürmek çocuk daemon'ı da düşürür →
+                # süreç execv'e ulaşamaz, panel bir daha açılmaz.
+                protected = system.process_ancestors(my_pid)
                 stray_daemons = system.kill_stray_daemons(
-                    "tether_isolator gui", exclude_pid=my_pid)
+                    "tether_isolator gui", exclude_pid=my_pid, exclude_pids=protected)
                 if stray_daemons:
                     log.warning("kalıntı daemon süreçleri sonlandırıldı: %s", stray_daemons)
                 stray_helpers = system.kill_stray_daemons(
-                    f"/etc/netns/{s.namespace}/wpa_", exclude_pid=my_pid)
+                    f"/etc/netns/{s.namespace}/wpa_", exclude_pid=my_pid,
+                    exclude_pids=protected)
                 if stray_helpers:
                     log.warning("sahipsiz WiFi yardımcı süreçleri sonlandırıldı: %s",
                                 stray_helpers)

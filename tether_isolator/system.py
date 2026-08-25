@@ -252,6 +252,26 @@ def _parse_iw_scan(out: str) -> list[WifiNetwork]:
     return sorted(networks.values(), key=lambda n: -(n.signal if n.signal is not None else -999))
 
 
+def wifi_current_ssid(iface: str, *, in_namespace: Optional[str] = None,
+                      dry_run: bool = False) -> str:
+    """Arayüzün ŞU AN bağlı olduğu SSID (bağlı değilse boş string).
+
+    Ubuntu ağ menüsünde bağlı ağın listenin başında "Bağlandı" etiketiyle
+    gösterilmesi için gerekir.
+    """
+    if dry_run or not have("iw"):
+        return ""
+    base = ["ip", "netns", "exec", in_namespace] if in_namespace else []
+    res = run(base + ["iw", "dev", iface, "link"], check=False, dry_run=dry_run)
+    if not res.ok:
+        return ""
+    for line in res.out.splitlines():
+        s = line.strip()
+        if s.startswith("SSID:"):
+            return s.split("SSID:", 1)[1].strip()
+    return ""
+
+
 def wifi_scan(iface: str, *, in_namespace: Optional[str] = None,
               dry_run: bool = False) -> tuple[list[WifiNetwork], str]:
     """Çevredeki WiFi ağlarını tarar (Ubuntu ağ menüsündeki gibi bir liste için).
@@ -289,22 +309,51 @@ def wifi_scan(iface: str, *, in_namespace: Optional[str] = None,
     return [], last_err or "tarama başarısız"
 
 
-def kill_stray_daemons(pattern: str, *, exclude_pid: int) -> list[int]:
-    """`/proc` üzerinden komut satırında `pattern` geçen (kendisi HARİÇ) tüm
-    süreçlere SIGTERM gönderir; sonlandırılan PID'leri döndürür.
+def process_ancestors(pid: int) -> set[int]:
+    """`pid`'in tüm ata süreçlerini (PPid zinciri) döndürür.
 
-    "Yeniden başlat"ta artık kalıntı/kopya daemon süreçlerini (ör. eski bir
-    kod sürümünden kalmış, portu tutan bir örnek) veya bize ait yalnız kalmış
-    yardımcı süreçleri (wpa_supplicant vb.) temizlemek için kullanılır. Kendi
-    PID'imizi (exclude_pid) HARİÇ tutmak zorunlu: execv ile kendimizi yeniden
-    başlatmadan önce kendimizi SIGTERM'lemeyelim.
+    "Yeniden başlat" sırasında kendi atalarımızı ASLA öldürmemeliyiz: daemon
+    `pkexec env ... python3 -m tether_isolator gui` ile başlatılır ve bu
+    sarmalayıcının komut satırı da "tether_isolator gui" DESENİNİ İÇERİR.
+    Sarmalayıcı SIGTERM alınca çocuk daemon da onunla birlikte ölür → süreç
+    `execv`'e hiç ulaşamaz ve panel bir daha açılmaz. (Başlatıcı betiği aynı
+    tuzağı kendi içinde not ediyor: bkz. bin/tether-isolator-app.)
     """
+    seen: set[int] = set()
+    cur = pid
+    while cur > 1 and cur not in seen:
+        try:
+            with open(f"/proc/{cur}/status") as f:
+                ppid = next((int(line.split()[1]) for line in f
+                             if line.startswith("PPid:")), 0)
+        except (OSError, ValueError, IndexError):
+            break
+        if ppid <= 0:
+            break
+        seen.add(ppid)
+        cur = ppid
+    return seen
+
+
+def kill_stray_daemons(pattern: str, *, exclude_pid: int,
+                       exclude_pids: "set[int] | frozenset[int]" = frozenset()) -> list[int]:
+    """`/proc` üzerinden komut satırında `pattern` geçen süreçlere SIGTERM gönderir.
+
+    Hariç tutulanlar:
+      * `exclude_pid` — kendi PID'imiz (execv ile yeniden başlamadan önce
+        kendimizi öldürmeyelim).
+      * `exclude_pids` — ek koruma listesi; çağıran taraf buraya kendi ata
+        zincirini (bkz. `process_ancestors`) verir. Bu OLMADAN, pkexec/sudo
+        sarmalayıcısı da desene uyduğu için öldürülür ve daemon onunla birlikte
+        ölür — "yeniden başlat dedim ama açılmadı" hatasının kaynağı buydu.
+    """
+    protected = {exclude_pid, *exclude_pids}
     killed: list[int] = []
     for pid_s in os.listdir("/proc"):
         if not pid_s.isdigit():
             continue
         pid = int(pid_s)
-        if pid == exclude_pid:
+        if pid in protected:
             continue
         try:
             with open(f"/proc/{pid_s}/cmdline", "rb") as f:

@@ -82,16 +82,32 @@ fi
 DPID=$!
 
 # 4) Port hazır olana kadar bekle (parola girişi için ~90sn pay)
+#
+#    ÖNEMLİ — pkexec'in ölümü BAŞARISIZLIK DEĞİLDİR: bazı polkit/pkexec
+#    yapılandırmalarında sarmalayıcı süreç, root çocuğu doğurduktan hemen sonra
+#    ÇIKAR. Daemon arka planda (init'e evlat edindirilmiş olarak) sorunsuz
+#    çalışmaya devam eder. Eskiden `kill -0 $DPID` başarısız olur olmaz
+#    "Başlatılamadı" deniyordu; daemon açılmış olsa bile kullanıcı hata görüyordu.
+#    Bu yüzden DPID kaybolduğunda hemen pes etmiyor, panelin açılması için ek
+#    süre tanıyoruz (asıl ölçüt DPID değil, PORTUN YANIT VERMESİ).
+GRACE_TICKS=40            # DPID öldükten sonra ~20 sn daha panel beklenir
+grace_left=""
 for _ in $(seq 1 180); do
   if panel_up; then
     open_browser
-    wait "$DPID"          # panel "Çıkış" diyene kadar canlı tut
+    # DPID hâlâ bizim çocuğumuzsa panel "Çıkış" diyene kadar canlı tut; pkexec
+    # çıkmışsa `wait` hata verir → o durumda sadece çık (daemon zaten ayakta).
+    if kill -0 "$DPID" 2>/dev/null; then wait "$DPID"; fi
     exit 0
   fi
   if ! kill -0 "$DPID" 2>/dev/null; then
-    last="$(tail -n 2 "$LOG" 2>/dev/null | tr '\n' ' ')"
-    note "Başlatılamadı. Son günlük: ${last:-yok}  (tam günlük: $LOG)"
-    exit 1
+    [ -z "$grace_left" ] && grace_left="$GRACE_TICKS"
+    if [ "$grace_left" -le 0 ]; then
+      last="$(tail -n 2 "$LOG" 2>/dev/null | tr '\n' ' ')"
+      note "Başlatılamadı. Son günlük: ${last:-yok}  (tam günlük: $LOG)"
+      exit 1
+    fi
+    grace_left=$((grace_left - 1))
   fi
   sleep 0.5
 done

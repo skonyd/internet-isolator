@@ -26,6 +26,12 @@ class AppProcess:
     pid: int
     running: bool = True
     started_at: float = field(default_factory=time.time)
+    # Bu uygulama başlatılırken yürürlükte olan medya kademesi. Tarayıcı
+    # bayrakları/user.js yalnızca BAŞLATMA anında uygulanabildiğinden, kullanıcı
+    # sürgüyü sonradan değiştirdiğinde çalışan örnek ESKİ ayarda kalır. Panel bu
+    # alanı profildeki güncel kademeyle karşılaştırıp "yeniden başlat" uyarısı
+    # gösterir — aksi halde kullanıcı "kapalı dedim ama video hâlâ oynuyor" der.
+    media_level: str = ""
 
 
 @dataclass
@@ -61,6 +67,21 @@ class RuntimeState:
     # Trafik sayacı (H-1)
     traffic_rx: int = 0            # oturum boyunca indirilen bayt
     traffic_tx: int = 0            # oturum boyunca yüklenen bayt
+    traffic_rate_rx: float = 0.0   # anlık indirme hızı (B/s)
+    traffic_rate_tx: float = 0.0   # anlık yükleme hızı (B/s)
+    session_started_at: float = 0.0
+    # Kalıcı kullanım (veri tasarrufu U-6/kota) — usage.json'dan
+    usage_today_rx: int = 0
+    usage_today_tx: int = 0
+    usage_month_rx: int = 0
+    usage_month_tx: int = 0
+    quota_warned: bool = False
+    quota_hit: bool = False
+    # Bant genişliği tavanı (Faz 4)
+    shaping_active: bool = False
+    shaping_down_kbit: int = 0
+    shaping_up_kbit: int = 0
+    shaping_method: str = ""       # cake | tbf | police | ""
     # Uçtan uca sağlık göstergesi (H-7)
     health_gateway: bool = False   # gateway'e ping
     health_dns: bool = False       # DNS çözümü

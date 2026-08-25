@@ -40,6 +40,202 @@ KNOWN_APPS = [
     "brave-browser", "opera", "firefox", "code", "terminator", "xterm",
 ]
 
+# Veri tasarrufu (Faz 3): yalnızca tarayıcılara uygulanır — VS Code/terminator
+# hariç. Bayraklar/user.js yalnızca YENİ başlatılan örnekte etkilidir; halihazırda
+# açık bir tarayıcı varsa manager.restart_apps() ile yeniden başlatılmalı.
+_CHROMIUM_FAMILY = {
+    "google-chrome", "google-chrome-stable", "chromium", "chromium-browser",
+    "brave-browser", "opera",
+}
+
+# Otomatik oynatmayı, arka plan senkron/güncelleme/prefetch trafiğini kapatır
+# ve disk önbelleğini büyütür (tekrar indirmeyi azaltır). Chrome'un eski
+# "Data Saver" proxy modu masaüstünde kaldırıldığı için proxy vaadi YOK.
+_CHROMIUM_DATA_SAVER_BASE = (
+    "--autoplay-policy=user-gesture-required --disable-background-networking "
+    "--disable-component-update --disable-sync --no-pings "
+    "--disk-cache-size=1073741824 "
+    "--disable-features=OptimizationHints,Translate,MediaRouter"
+)
+_CHROMIUM_DATA_SAVER_STRICT = "--blink-settings=imagesEnabled=false"
+
+# Medya (video/müzik) engelleme — Chromium ailesi.
+#
+# Neden bu yöntem (denenen ve ELENEN alternatifler):
+#   * Uzantı (`--load-extension`): Chrome 137+ komut satırından paketlenmemiş
+#     uzantı yüklemeyi güvenlik gerekçesiyle kaldırdı. Bayrak SESSİZCE yok
+#     sayılıyor (hata bile vermiyor) → tarayıcı açılıyor, hiçbir şey engellenmiyor.
+#   * `--disable-blink-features=MediaSource`: Firefox'un MSE kapatmasının
+#     karşılığı olurdu ama Chrome'da MediaSource devre dışı bırakılabilir bir
+#     Blink runtime özelliği DEĞİL — bayrak etkisiz (mekanizmanın kendisi
+#     çalışıyor: ör. `Notifications` başarıyla kapanıyor; `MediaSource` kapanmıyor).
+#
+# Kalan sağlam yol: tarayıcının KENDİ ad çözümleyicisini yönlendirmek. Bu bir
+# DNS sunucusu/`resolv.conf` işi DEĞİLDİR — sistem DNS'ine hiç dokunulmaz,
+# yalnızca bu tarayıcı sürecinin iç çözümleyicisi medya CDN'lerini ölü bir
+# adrese eşler → segment istekleri anında bağlantı hatası alır.
+#
+# Sonuç: site/arayüz normal açılır (ana alan adları listede DEĞİL), yalnızca
+# video/ses segmentleri inemez. Joker (`*.`) desteği YouTube'un istek başına
+# ürettiği `rr3---sn-4g5ednek.googlevideo.com` gibi adları da yakalar.
+_MEDIA_BLOCK_HOSTS = (
+    "googlevideo.com",       # YouTube video/ses segmentleri
+    "nflxvideo.net",         # Netflix
+    "ttvnw.net",             # Twitch video edge
+    "scdn.co",               # Spotify ses CDN
+    "sndcdn.com",            # SoundCloud
+    "vimeocdn.com",          # Vimeo
+    "video.twimg.com",       # Twitter/X video
+    "dmcdn.net",             # Dailymotion
+)
+# Loopback'e eşle: izole alanda 443'te dinleyen bir şey olmadığından bağlantı
+# ANINDA reddedilir (blackhole IP'de olduğu gibi uzun zaman aşımı beklenmez).
+_MEDIA_BLOCK_SINK = "127.0.0.1"
+
+
+def _chromium_media_block_flag() -> str:
+    """Chromium ailesi için `--host-resolver-rules=...` bayrağını üretir (kabuk-güvenli)."""
+    rules = []
+    for host in _MEDIA_BLOCK_HOSTS:
+        rules.append(f"MAP {host} {_MEDIA_BLOCK_SINK}")
+        rules.append(f"MAP *.{host} {_MEDIA_BLOCK_SINK}")
+    return shlex.quote("--host-resolver-rules=" + ",".join(rules))
+
+
+def _chromium_data_saver_flags(level: str) -> str:
+    flags = _CHROMIUM_DATA_SAVER_BASE
+    if level == "strict":
+        flags += " " + _CHROMIUM_DATA_SAVER_STRICT
+    return flags
+
+
+# Firefox aynı bayrak mekanizmasını desteklemez; izole profile bir user.js
+# yazılır. Chromium'daki karşılıklarıyla aynı amaç: prefetch/sync/güncelleme
+# arka plan trafiğini kapat, disk önbelleğini büyüt, otomatik oynatmayı kıs.
+_FIREFOX_DATA_SAVER_BASE = {
+    "network.prefetch-next": False,
+    "network.dns.disablePrefetch": True,
+    "network.predictor.enabled": False,
+    "media.autoplay.default": 5,             # 5 = kullanıcı etkileşimi gerekir
+    "app.update.auto": False,
+    "extensions.update.enabled": False,
+    "browser.cache.disk.capacity": 1048576,  # KB — ~1 GB
+    "browser.newtabpage.activity-stream.feeds.section.topstories": False,
+}
+_FIREFOX_DATA_SAVER_STRICT = {
+    "permissions.default.image": 2,          # 2 = görselleri engelle
+}
+
+_FIREFOX_MARKER_START = "// --- tether-isolator: veri tasarrufu (otomatik) ---"
+_FIREFOX_MARKER_END = "// --- tether-isolator: veri tasarrufu sonu ---"
+
+# Medya (video/müzik) engelleme — veri tasarrufu düzeyinden BAĞIMSIZ, kendi
+# işaretçi çiftiyle ayrı bir user.js bloğu (aynı dosyada iki blok bir arada
+# durabilir; bkz. _splice_firefox_block).
+#
+# MediaSource Extensions'ı (MSE) kapatır: YouTube/Netflix/Twitch/Spotify web
+# player'ı DAHİL, uyarlanabilir video/ses akışı yapan neredeyse her modern
+# oynatıcı MSE'ye bağımlıdır. API'nin kendisi yoksa oynatıcı segment indirmeye
+# hiç BAŞLAYAMAZ — bilinen bir CDN alan adı listesine güvenmekten (kolayca
+# eksik/eski kalır) çok daha güvenilir. Düz <video src>/<audio src>
+# dosyaları da ayrıca media.*.enabled ile kapatılır.
+_FIREFOX_MEDIA_BLOCK_PREFS = {
+    "media.mediasource.enabled": False,
+    "media.mp4.enabled": False,
+    "media.webm.enabled": False,
+    "media.ogg.enabled": False,
+    "media.wave.enabled": False,
+    "media.av1.enabled": False,
+}
+_FIREFOX_MEDIA_MARKER_START = "// --- tether-isolator: video/müzik engelleme (otomatik) ---"
+_FIREFOX_MEDIA_MARKER_END = "// --- tether-isolator: video/müzik engelleme sonu ---"
+
+
+def _firefox_pref_literal(value) -> str:
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    return str(value)
+
+
+def _firefox_pref_block(prefs: dict, marker_start: str, marker_end: str) -> str:
+    lines = [marker_start]
+    for key in sorted(prefs):
+        lines.append(f'user_pref("{key}", {_firefox_pref_literal(prefs[key])});')
+    lines.append(marker_end)
+    return "\n".join(lines)
+
+
+def _firefox_data_saver_block(level: str) -> str:
+    prefs = dict(_FIREFOX_DATA_SAVER_BASE)
+    if level == "strict":
+        prefs.update(_FIREFOX_DATA_SAVER_STRICT)
+    return _firefox_pref_block(prefs, _FIREFOX_MARKER_START, _FIREFOX_MARKER_END)
+
+
+def _splice_firefox_block(existing: str, block: str | None, *,
+                          marker_start: str = _FIREFOX_MARKER_START,
+                          marker_end: str = _FIREFOX_MARKER_END) -> str:
+    """user.js içindeki KENDİ (marker_start/end) bloğumuzu ekler/günceller/kaldırır.
+
+    Kullanıcının elle eklediği satırlara VE varsa bu dosyadaki DİĞER
+    özelliğin (farklı marker çiftiyle yazılmış) bloğuna dokunmaz — yalnızca
+    kendi başlangıç/bitiş işaretçileri arasındaki bölüm değiştirilir.
+    """
+    if marker_start in existing and marker_end in existing:
+        pre, _, rest = existing.partition(marker_start)
+        _, _, post = rest.partition(marker_end)
+        pre, post = pre.rstrip("\n"), post.lstrip("\n")
+    else:
+        pre, post = existing.rstrip("\n"), ""
+    parts = [p for p in (pre, block, post) if p]
+    return ("\n\n".join(parts) + "\n") if parts else ""
+
+
+def _apply_firefox_data_saver(profile_dir: str, enabled: bool, level: str) -> None:
+    """Firefox profilindeki user.js'i veri tasarrufu durumuna göre günceller."""
+    path = os.path.join(profile_dir, "user.js")
+    try:
+        with open(path, encoding="utf-8") as f:
+            existing = f.read()
+    except OSError:
+        existing = ""
+    block = _firefox_data_saver_block(level) if enabled else None
+    content = _splice_firefox_block(existing, block)
+    if not content:
+        try:
+            os.remove(path)
+        except OSError:
+            pass
+        return
+    with open(path, "w", encoding="utf-8") as f:
+        f.write(content)
+
+
+def _apply_firefox_media_block(profile_dir: str, enabled: bool) -> None:
+    """Firefox profilinde MediaSource + medya format desteğini kapatır/açar.
+
+    `data_saver.enabled`'dan bağımsız çalışır (kendi marker çifti; bkz.
+    _splice_firefox_block'un DİĞER bloğa dokunmama garantisi).
+    """
+    path = os.path.join(profile_dir, "user.js")
+    try:
+        with open(path, encoding="utf-8") as f:
+            existing = f.read()
+    except OSError:
+        existing = ""
+    block = _firefox_pref_block(_FIREFOX_MEDIA_BLOCK_PREFS, _FIREFOX_MEDIA_MARKER_START,
+                                _FIREFOX_MEDIA_MARKER_END) if enabled else None
+    content = _splice_firefox_block(existing, block, marker_start=_FIREFOX_MEDIA_MARKER_START,
+                                    marker_end=_FIREFOX_MEDIA_MARKER_END)
+    if not content:
+        try:
+            os.remove(path)
+        except OSError:
+            pass
+        return
+    with open(path, "w", encoding="utf-8") as f:
+        f.write(content)
+
 
 # Host'taki GERÇEK (izole olmayan) tarayıcı profili kökleri — "profil içe aktar"
 # özelliğinin kaynağı. Chromium ailesi + VS Code için kök, --user-data-dir ile
@@ -307,6 +503,29 @@ def launch(settings: Settings, profile: Profile, program: str,
             # kimliğiyle açılan uygulama (tarayıcı) bunları kullanamaz → devret.
             system.chown_to_user(profile.profile_data_dir(user), user)
         flags = tmpl.format(dir=data_dir) if "{dir}" in tmpl else tmpl
+
+        # Veri tasarrufu (Faz 3): Chromium ailesine komut satırı bayrağı ekle,
+        # Firefox'a profile user.js yaz. Yalnızca YENİ başlatılan örnekte etkili.
+        ds = profile.data_saver
+        # Medya kademesi: yalnızca "blocked" tarayıcı seviyesinde SERT engel
+        # uygular. "360p"/"720p" kaliteyi bant genişliği tavanıyla düşürür
+        # (manager._apply_shaping) — tarayıcıya dokunmaz, çünkü oynatıcıya
+        # "şu çözünürlüğü kullan" diyen bir tarayıcı arayüzü yok.
+        hard_block = ds.media_level == "blocked"
+        if prog_name in _CHROMIUM_FAMILY:
+            if ds.enabled:
+                flags = f"{flags} {_chromium_data_saver_flags(ds.level)}".strip()
+            if hard_block:
+                flags = f"{flags} {_chromium_media_block_flag()}".strip()
+        elif prog_name == "firefox" and data_dir and not dry_run:
+            try:
+                _apply_firefox_data_saver(data_dir, ds.enabled, ds.level)
+            except OSError as e:
+                log.warning("Firefox veri tasarrufu user.js yazılamadı: %s", e)
+            try:
+                _apply_firefox_media_block(data_dir, hard_block)
+            except OSError as e:
+                log.warning("Firefox medya engelleme user.js yazılamadı: %s", e)
 
     # Program + bayrakları boşlukları koruyarak ayır (yollarda boşluk olabilir).
     argv = shlex.split(f"{program} {flags}".strip())

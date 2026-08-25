@@ -49,6 +49,18 @@ class Engine:
         self._ns("ip", "link", "set", "dev", "lo", "up")
         self._write_resolv(profile.dns)
 
+    # glibc, A ve AAAA sorgularını VARSAYILAN olarak aynı kaynak porttan
+    # paralel gönderir. Telefon hotspot'ları/basit NAT'lar (ör. iPhone Personal
+    # Hotspot — 172.20.10.0/28) ikinci yanıtı sık sık düşürür; resolver o zaman
+    # tam timeout (5 sn) bekler. Sonuç: bağlantı "çalışıyor" ama HER isim
+    # çözümlemesi ~5 sn sürer → tarayıcılar internet yokmuş gibi davranır.
+    # (Ölçüm: A tek başına 0,09 sn · AAAA tek başına 0,12 sn · ikisi 5,64 sn.)
+    #
+    # `single-request-reopen` glibc'ye iki sorgu için AYRI soket kullandırır ve
+    # bu çakışmayı tamamen ortadan kaldırır. `timeout:2` ise başka bir nedenle
+    # paket kaybolursa beklemeyi 5 sn yerine 2 sn ile sınırlar (emniyet ağı).
+    _RESOLV_OPTIONS = ("single-request-reopen", "timeout:2", "attempts:2")
+
     def _write_resolv(self, dns: list[str]) -> None:
         path = f"/etc/netns/{self.ns}"
         if self.dry:
@@ -58,6 +70,7 @@ class Engine:
         with open(os.path.join(path, "resolv.conf"), "w") as f:
             for ns in dns:
                 f.write(f"nameserver {ns}\n")
+            f.write(f"options {' '.join(self._RESOLV_OPTIONS)}\n")
 
     # ----- uplink taşıma -----
     def move_uplink_in(self, iface: str) -> None:

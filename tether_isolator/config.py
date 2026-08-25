@@ -67,6 +67,36 @@ class RelayPolicy:
 
 
 @dataclass
+class DataSaverPolicy:
+    """Veri tasarrufu modu.
+
+    Faz 1+2 kapsamı: yalnızca daemon'un KENDİ prob trafiğini kısar (watchdog
+    aralığı, dış IP sorgusu, hız testi boyutu) — namespace fiziksel olarak
+    izole olduğundan host trafiğine zaten dokunmuyoruz. Bant genişliği tavanı
+    (tc/ifb) ve tarayıcı bayrakları (autoplay/prefetch kapatma) sonraki bir
+    fazda eklenecek; `level` alanı o faza hazırlık olarak şimdiden var.
+    """
+    enabled: bool = False
+    level: str = "balanced"          # light | balanced | strict
+    frugal_probes: bool = True       # watchdog/public-ip sorgularını seyrelt
+    quota_mb: int = 0                # 0 = kapalı (aylık)
+    quota_action: str = "warn"       # warn | killswitch
+    # Faz 4: bant genişliği tavanı (kbit/s). 0 = seviyeden türet (bkz.
+    # manager._LEVEL_CAPS_KBIT); girilirse seviyeyi geçersiz kılar.
+    cap_down_kbit: int = 0
+    cap_up_kbit: int = 0
+    # Faz 5: video/müzik kısıtlama kademesi. `enabled` kapalıyken de tek başına
+    # kullanılabilir — genel veri tasarrufundan bağımsız.
+    #   off     : kısıtlama yok
+    #   144p    : bant genişliği tavanıyla kaliteyi düşür (bkz. manager._MEDIA_QUALITY_CAP_KBIT)
+    #   360p    : aynı mantık, daha yüksek tavan
+    #   720p    : aynı mantık, daha yüksek tavan
+    #   blocked : tarayıcı seviyesinde tamamen engelle (Firefox MSE kapalı /
+    #             Chromium ad çözümleyici yönlendirmesi — bkz. apps.py)
+    media_level: str = "off"
+
+
+@dataclass
 class Profile:
     name: str
     uplink: str = ""
@@ -83,6 +113,7 @@ class Profile:
     vpn_config: str = ""
     vpn_required: bool = False       # H-3: VPN zorunluysa düşünce kill-switch
     relay: RelayPolicy = field(default_factory=RelayPolicy)
+    data_saver: DataSaverPolicy = field(default_factory=DataSaverPolicy)
 
     def profile_data_dir(self, username: str) -> str:
         return os.path.join(_data_dir_for(username), "profiles", self.name)
@@ -91,9 +122,18 @@ class Profile:
     def from_dict(cls, d: dict) -> "Profile":
         d = dict(d)
         relay = d.pop("relay", {}) or {}
+        data_saver = d.pop("data_saver", {}) or {}
         prof = cls(**{k: v for k, v in d.items() if k in cls.__annotations__})
         prof.relay = RelayPolicy(**{k: v for k, v in relay.items()
                                     if k in RelayPolicy.__annotations__})
+        # Geriye dönük uyumluluk: eski profillerde media_level yerine boolean
+        # `block_media` vardı. Açık olan eski profiller en katı kademeye eşlenir.
+        legacy_block = data_saver.pop("block_media", None)
+        prof.data_saver = DataSaverPolicy(
+            **{k: v for k, v in data_saver.items()
+               if k in DataSaverPolicy.__annotations__})
+        if legacy_block is not None and "media_level" not in data_saver:
+            prof.data_saver.media_level = "blocked" if legacy_block else "off"
         return prof
 
 
