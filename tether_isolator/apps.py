@@ -13,6 +13,7 @@ import shlex
 import shutil
 import stat
 import subprocess
+import threading
 import time
 
 from . import system
@@ -291,6 +292,33 @@ class ImportProfileError(RuntimeError):
     pass
 
 
+class LaunchError(RuntimeError):
+    pass
+
+
+def _find_executable(token: str, user: str) -> str | None:
+    """Bir komutun ilk parçası (`token`) için çalıştırılabilir tam yolu bulur (yoksa None).
+
+    Mutlak/`~` yollar doğrudan var mı/x-biti var mı diye kontrol edilir. Çıplak
+    isimler önce daemon'ın (root) PATH'inde aranır, sonra kullanıcının yaygın
+    kişisel bin dizinlerinde (~/.local/bin, ~/bin) — daemon root olarak
+    çalıştığından PATH'i kullanıcının login PATH'iyle aynı olmayabilir ve bu
+    dizinler PATH'te hiç yer almayabilir.
+    """
+    if "/" in token:
+        expanded = os.path.expanduser(token)
+        return expanded if os.path.isfile(expanded) and os.access(expanded, os.X_OK) else None
+    found = shutil.which(token)
+    if found:
+        return found
+    home = system.user_home(user)
+    for d in (".local/bin", "bin"):
+        candidate = os.path.join(home, d, token)
+        if os.path.isfile(candidate) and os.access(candidate, os.X_OK):
+            return candidate
+    return None
+
+
 def _ignore_special_files(dirpath: str, names: list[str]) -> set[str]:
     """`shutil.copytree` 'ignore' geri çağrısı: FIFO/soket/aygıt dosyalarını atlar.
 
@@ -470,12 +498,32 @@ def _gui_env() -> dict[str, str]:
     return {k: os.environ[k] for k in keep if k in os.environ}
 
 
+# _spawn'daki anlık-çöküş algılama penceresi: eksik ikili/kütüphane, izin ya
+# da apparmor reddi tipik olarak onlarca-yüzlerce ms içinde süreci öldürür.
+_LAUNCH_GRACE_SECONDS = 0.8
+_LAUNCH_POLL_INTERVAL = 0.05
+
+
 def launch(settings: Settings, profile: Profile, program: str,
            *, dry_run: bool = False) -> int:
     """Bir uygulamayı namespace içinde başlatır; PID döndürür (0 = dry/başarısız)."""
     user = system.real_user()
-    prog_name = os.path.basename(program.split()[0])
+    first_token = program.split()[0]
+    prog_name = os.path.basename(first_token)
     flags = ""
+
+    # Yaygın sessiz-başarısızlık kaynağı: kayıtlı komut artık yok (uygulama
+    # kaldırıldı/taşındı, kendi kendini güncelledi, elle yanlış yol girildi).
+    # Kontrol etmeden Popen zaten "başarılı" döner (netns/sh -c kabuğu açılır);
+    # gerçek exec sessizce (stderr DEVNULL'a gider) başarısız olur ve kullanıcı
+    # hiçbir şey görmeden "tıkladım, çalışmadı" durumunda kalır. dry_run'da
+    # (fonksiyonun geri kalanındaki diğer tüm gerçek-sistem kontrolleri gibi)
+    # atlanır: dry-run'ın sözleşmesi gerçek makine durumuna bakmamaktır.
+    if not dry_run and not _find_executable(first_token, user):
+        raise LaunchError(
+            f"Uygulama bulunamadı: {first_token} "
+            "(PATH'te ve ~/.local/bin, ~/bin içinde yok — kaldırılmış veya "
+            "taşınmış olabilir)")
 
     # İzolasyon güvenliği: bu uygulamalar (Chromium ailesi, Firefox, VS Code)
     # aynı profil dizinini kullanan bir örnek ZATEN çalışıyorsa, isteği
@@ -565,12 +613,52 @@ def _spawn(settings: Settings, user: str, argv: list[str], *, dry_run: bool) -> 
     if dry_run:
         log.info("[dry] %s", " ".join(cmd))
         return 0
-    # Başlatıp arkaplana bırak; canlılık izleme PID üzerinden (watchdog).
+    # stderr'i PIPE'a al ama arka plan thread'iyle sürekli boşalt: aksi halde
+    # (a) DEVNULL kullanılsa anlık başarısızlıkların (izin/apparmor reddi,
+    # eksik paylaşımlı kütüphane vb. — ikili VAR ama exec/çalışma anında
+    # patlıyor) hiçbir izi kalmaz; (b) boşaltma thread'i olmadan PIPE, uzun
+    # ömürlü/gevezelik eden uygulamalarda (ör. Chromium GPU/ANGLE logları)
+    # dolup süreci kilitleyebilir. Thread süreç boyunca EOF'a kadar okur;
+    # yalnızca teşhis için ilk ~4KB'ı saklar.
     proc = subprocess.Popen(
-        cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
         start_new_session=True,
     )
+    captured = bytearray()
+    threading.Thread(target=_drain_stderr, args=(proc.stderr, captured),
+                      daemon=True).start()
+    # Başlatıp arkaplana bırak; canlılık izleme PID üzerinden (watchdog).
+    # Ama önce kısa bir pencerede süreç canlı mı diye bakıyoruz — eksik ikili/
+    # kütüphane, izin ya da apparmor reddi gibi anlık çöküşler tipik olarak
+    # onlarca-yüzlerce ms içinde olur. Uzun ömürlü GUI uygulamaları bu
+    # pencerede hiç çıkmaz; yalnızca gerçekten anında patlayanlar yakalanır.
+    deadline = time.monotonic() + _LAUNCH_GRACE_SECONDS
+    rc = None
+    while time.monotonic() < deadline:
+        rc = proc.poll()
+        if rc is not None:
+            break
+        time.sleep(_LAUNCH_POLL_INTERVAL)
+    if rc not in (None, 0):
+        tail = bytes(captured).decode("utf-8", "replace").strip()
+        raise LaunchError(
+            f"Uygulama hemen sonlandı (çıkış kodu {rc})" + (f": {tail}" if tail else ""))
     return proc.pid
+
+
+def _drain_stderr(pipe, sink: bytearray) -> None:
+    """stderr PIPE'ını sürecin ömrü boyunca boşaltır; ilk ~4KB'ı teşhis için saklar."""
+    try:
+        while True:
+            chunk = pipe.read(4096)
+            if not chunk:
+                break
+            if len(sink) < 4096:
+                sink.extend(chunk)
+    except (OSError, ValueError):
+        pass
+    finally:
+        pipe.close()
 
 
 def list_namespace_pids(namespace: str) -> list[int]:

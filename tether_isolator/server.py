@@ -31,6 +31,7 @@ from urllib.parse import urlparse
 
 from . import __version__, apps, system, usage
 from .config import Profile, Settings, VPNS_DIR
+from .engine import EngineError
 from .manager import Manager
 
 log = logging.getLogger("tether.server")
@@ -339,6 +340,12 @@ class _Handler(BaseHTTPRequestHandler):
         body = self._body()
         try:
             return self._api_post(path, body)
+        except (EngineError, apps.LaunchError, apps.ImportProfileError) as e:
+            # Bunlar kasıtlı yazılmış, kullanıcıya gösterilmesi güvenli mesajlar
+            # taşır (dahili yol/komut/stderr sızdırmaz) — G-4'ün amacı bunları
+            # değil, beklenmeyen/ayrıntılı hataları gizlemekti.
+            log.info("API isteği reddedildi: %s", e)
+            self._json({"error": str(e)}, 400)
         except Exception as e:  # noqa: BLE001
             log.exception("API hatası")
             # Bilgi sızıntısını önle (G-4): kullanıcıya genel mesaj, ayrıntı logda
