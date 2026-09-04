@@ -470,7 +470,12 @@ class Manager:
                 raise EngineError("Etkin oturum yok; önce başlatın.")
             prof = self._active_profile
             assert prof
-            pid = apps.launch(self.s, prof, program, dry_run=self.dry)
+            try:
+                pid = apps.launch(self.s, prof, program, dry_run=self.dry)
+            except Exception as e:  # noqa: BLE001
+                self._event("error", f"{program} başlatılamadı: {e}")
+                self.state.persist()
+                raise
             self.state.apps.append(AppProcess(
                 command=program, pid=pid,
                 media_level=prof.data_saver.media_level))

@@ -1,4 +1,5 @@
 """apps.py testleri: uygulama keşfi, komut/bayrak kurulumu, resolv.conf sarmalı."""
+import io
 import os
 import tempfile
 import unittest
@@ -66,6 +67,8 @@ class TestApps(unittest.TestCase):
         s = Settings()
         fake_proc = mock.Mock()
         fake_proc.pid = 999
+        fake_proc.poll.return_value = None   # süreç hâlâ çalışıyor (anlık çöküş yok)
+        fake_proc.stderr = io.BytesIO(b"")   # boşaltma thread'i hemen EOF görüp çıkar
         with mock.patch("subprocess.Popen", return_value=fake_proc) as popen, \
              mock.patch.object(system, "user_home", return_value="/home/x"):
             pid = apps._spawn(s, "user", ["opera"], dry_run=False)
