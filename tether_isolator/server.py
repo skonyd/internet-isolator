@@ -408,6 +408,18 @@ class _Handler(BaseHTTPRequestHandler):
                 m.disable_relay()
             return self._json({"ok": True, "state": m.snapshot()})
 
+        if path == "/api/relay/scope":
+            pname = body.get("profile") or s.active_profile
+            prof = s.profile(pname)
+            scope = (body.get("scope") or "").strip()
+            if scope not in ("lan", "custom"):
+                return self._json({"error": "scope 'lan' ya da 'custom' olmalı"}, 400)
+            prof.relay.scope = scope
+            s.save()
+            if prof is m.active_profile:
+                m.set_relay_scope(scope)
+            return self._json({"ok": True, "state": m.snapshot()})
+
         if path == "/api/relay/targets/add":
             pname = body.get("profile") or s.active_profile
             prof = s.profile(pname)

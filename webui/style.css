@@ -357,6 +357,11 @@ select {
 .checkbox-row em { color: var(--muted); font-style: normal; }
 .hint-sm { font-size: 12px; margin-top: 6px; }
 
+.relay-scope-options { display: flex; flex-direction: column; gap: 6px; margin-top: 6px; }
+.radio-row { display: flex; align-items: flex-start; gap: 10px;
+             font-size: 13.5px; cursor: pointer; }
+.radio-row input { width: 18px; height: 18px; margin-top: 1px; accent-color: var(--accent); flex-shrink: 0; }
+
 /* ---- detay listesi ---- */
 .detail { display: grid; gap: 2px; }
 .detail > div { display: flex; justify-content: space-between; align-items: center;
@@ -502,6 +507,27 @@ select {
 }
 .quota-bar-fill.warn { background: var(--yellow); }
 .quota-bar-fill.danger { background: var(--red); }
+
+/* ---- namespace-içi uzaktan erişim ---- */
+.remote-options { margin-top: 12px; }
+.remote-options .checkbox-row { margin: 8px 0; }
+.remote-options .text-input { width: 100%; }
+.remote-setup, .remote-login, .remote-commands {
+  margin-top: 12px; padding: 11px 12px; border-radius: var(--radius-sm);
+  background: var(--card-solid); border: 1px solid var(--line);
+}
+.remote-login { border-color: rgba(255,204,0,.4); }
+.remote-login p { margin: 0 0 10px; font-size: 13px; }
+.remote-login .btn { display: inline-block; width: auto; margin: 0; text-decoration: none; }
+.remote-details { margin-top: 12px; }
+.remote-commands code {
+  display: block; overflow-wrap: anywhere; user-select: all; margin-top: 7px;
+  padding: 8px 10px; border-radius: 8px; background: var(--bg); color: var(--text);
+  border: 1px solid var(--line); font-size: 12px;
+}
+.remote-commands code:empty { display: none; }
+.remote-box[data-verified="true"] { border-color: rgba(52,199,89,.38); }
+.remote-box[data-error="true"] { border-color: rgba(255,59,48,.45); }
 
 /* ---- hız testi (U-7) ---- */
 .speed-test-result {

@@ -73,9 +73,11 @@ class Relay:
         self._ns("ip", "addr", "add", ns_cidr, "dev", NS_VETH)
         self._ns("ip", "link", "set", NS_VETH, "up")
 
-        # 4) host'un ulaştığı ağları (varsayılan-DIŞI) izole alana rota olarak ekle.
-        #    Varsayılan rotaya DOKUNMAYIZ → internet tether'de kalır.
-        routes = self._host_lan_routes()
+        # 4) scope="lan" ise host'un ulaştığı ağları (varsayılan-DIŞI) izole alana
+        #    rota olarak ekle. scope="custom" ise yalnızca kullanıcının elle
+        #    eklediği hedefler aynalanır. Varsayılan rotaya DOKUNMAYIZ → internet
+        #    tether'de kalır.
+        routes = self._host_lan_routes() if getattr(policy, "scope", "lan") != "custom" else []
         # 4b) kullanıcının belirttiği EK hedefler (kurum-only dış adresler): alan
         #     adlarını çöz, IP/CIDR'ları normalize et; host üzerinden geçir.
         extra = self._resolve_extra(getattr(policy, "extra_targets", []))
@@ -124,7 +126,7 @@ class Relay:
         if not self.is_active():
             return []
         _, _, host_ip = self._addrs(policy)
-        routes = self._host_lan_routes()
+        routes = self._host_lan_routes() if getattr(policy, "scope", "lan") != "custom" else []
         extra = self._resolve_extra(getattr(policy, "extra_targets", []))
         for net in extra:
             if net not in routes:

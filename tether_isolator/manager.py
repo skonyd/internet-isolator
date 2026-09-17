@@ -208,7 +208,7 @@ class Manager:
                 raise
 
             self.state.relay_active = True
-            self.state.relay_scope = "lan"
+            self.state.relay_scope = prof.relay.scope
             self.state.relay_targets = list(routes)
             if routes:
                 detail = f" → {', '.join(routes)}"
@@ -230,6 +230,23 @@ class Manager:
         """
         with self._lock:
             self._reassert_relay_routes_locked()
+
+    def set_relay_scope(self, scope: str) -> None:
+        """Relay kapsamını değiştirir: "lan" (tüm host LAN rotaları) ya da
+        "custom" (yalnızca elle eklenen extra_targets). Relay AÇIKKEN
+        çağrılırsa kanal yeniden kurulur (reassert değil): "lan"dan "custom"a
+        geçişte artık listede olmayan LAN rotalarının ns içinde asılı
+        kalmaması gerekir; reassert yalnızca ekler/üzerine yazar, silmez."""
+        with self._lock:
+            prof = self._active_profile
+            if not prof:
+                return
+            prof.relay.scope = scope
+            if self.state.relay_active:
+                self.relay.disable()
+                routes = self.relay.enable(prof.relay)
+                self.state.relay_scope = scope
+                self.state.relay_targets = list(routes)
 
     def remove_relay_target(self, value: str) -> None:
         """Ek hedef listeden kaldırıldığında (relay AÇIKKEN) eski rotayı da siler."""

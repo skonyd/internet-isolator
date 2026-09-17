@@ -51,16 +51,17 @@ def _data_dir_for(username: str) -> str:
 class RelayPolicy:
     """Relay davranışı.
 
-    Relay açıldığında izole alan, bu makinenin ULAŞTIĞI LAN ağlarına (varsayılan
-    rota HARİÇ) erişir; internet izole alanın kendi uplink'inde kalır. Tek mod,
-    kapsam/allowlist yok. Aşağıdaki eski alanlar yalnızca geriye dönük profil
-    uyumluluğu için tutulur (artık kullanılmaz).
+    Relay açıldığında izole alan, `scope`'a göre ya bu makinenin ULAŞTIĞI TÜM
+    LAN ağlarına (varsayılan rota HARİÇ, scope="lan") ya da yalnızca kullanıcının
+    elle eklediği `extra_targets` hedeflerine (scope="custom") erişir; internet
+    izole alanın kendi uplink'inde kalır. Aşağıdaki eski alanlar yalnızca geriye
+    dönük profil uyumluluğu için tutulur (artık kullanılmaz).
     """
     enabled_by_default: bool = False
     host_subnet: str = "10.77.0.0/30"   # veth yan-kanalı için özel /30
     extra_targets: list[str] = field(default_factory=list)
+    scope: str = "lan"   # "lan" = host'un tüm LAN rotaları | "custom" = yalnızca extra_targets
     # --- eski alanlar (kullanılmıyor, eski profiller yüklensin diye korunur) ---
-    scope: str = "lan"
     lan_targets: list[str] = field(default_factory=list)
     verify_hosts: list[str] = field(default_factory=list)
     allowed_domains: list[str] = field(default_factory=list)

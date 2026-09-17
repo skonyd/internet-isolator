@@ -352,8 +352,21 @@
               <span class="slider"></span>
             </label>
           </div>
-          <p class="muted hint-sm" style="margin-top:12px">Açıldığında izole alandaki uygulamalar, bu bilgisayarın <b>ethernet/yerel ağı üzerinden ulaştığı her yere</b> erişir. <b>İnternet değişmez</b> — izole alanın tether/WiFi bağlantısında kalır.</p>
-          <label class="field-label" style="margin-top:12px">Ek hedefler (opsiyonel)</label>
+          <p class="muted hint-sm" style="margin-top:12px">Açıldığında izole alandaki uygulamalar, kapsam seçimine göre bu bilgisayarın <b>ulaştığı ağlara</b> erişir. <b>İnternet değişmez</b> — izole alanın tether/WiFi bağlantısında kalır.</p>
+
+          <label class="field-label" style="margin-top:12px">Kapsam</label>
+          <div class="relay-scope-options" id="relayScopeOptions">
+            <label class="radio-row">
+              <input type="radio" name="relayScope" id="relayScopeCustom" value="custom">
+              <span>Yalnızca aşağıda eklediğim ağlar</span>
+            </label>
+            <label class="radio-row">
+              <input type="radio" name="relayScope" id="relayScopeLan" value="lan">
+              <span>Bu bilgisayarın ulaştığı tüm LAN ağları</span>
+            </label>
+          </div>
+
+          <label class="field-label" style="margin-top:12px">Ek hedefler<span id="relayExtraLabelHint" class="muted"></span></label>
           <div id="relayExtraList" class="chip-list"></div>
           <div style="margin-top:8px">
             <button id="addRelayTargetBtn" class="btn ghost-btn btn-sm" type="button">+ Ağ Ekle</button>

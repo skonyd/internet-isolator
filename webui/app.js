@@ -790,7 +790,15 @@ function renderState(d) {
   $("speedTestBtn").disabled = busy || !running || !st.online;
   $("relayToggle").disabled = busy || !running;
   $("relayToggle").checked = !!st.relay_active;
-  renderRelayTargets((d.profiles?.[d.active_profile]?.relay?.extra_targets) || []);
+  const relayPolicy = d.profiles?.[d.active_profile]?.relay || {};
+  renderRelayTargets(relayPolicy.extra_targets || []);
+  const relayScope = relayPolicy.scope === "custom" ? "custom" : "lan";
+  $("relayScopeCustom").checked = relayScope === "custom";
+  $("relayScopeLan").checked = relayScope === "lan";
+  $("relayScopeCustom").disabled = busy;
+  $("relayScopeLan").disabled = busy;
+  $("relayExtraLabelHint").textContent = relayScope === "custom"
+    ? " (yalnızca bunlar aynalanır)" : " (LAN'a ek olarak aynalanır)";
 
   // Çoklu VPN Render
   if (d.vpns) {
@@ -1005,6 +1013,15 @@ $("relayToggle").onchange = (e) => withBusy(async () => {
   await api("/api/relay", {
     method: "POST", headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ enabled: e.target.checked }),
+  });
+});
+
+document.querySelectorAll('input[name="relayScope"]').forEach((el) => {
+  el.onchange = (e) => withBusy(async () => {
+    await api("/api/relay/scope", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ scope: e.target.value }),
+    });
   });
 });
 

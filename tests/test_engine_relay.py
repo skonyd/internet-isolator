@@ -138,6 +138,20 @@ class TestRelay(unittest.TestCase):
         self.assertTrue(fake.ran("route", "replace", "203.0.113.5/32"))
         self.assertIn("195.214.160.160/32", routes)
 
+    def test_enable_scope_custom_skips_host_lan_routes(self):
+        r = rly.Relay(Settings(), dry_run=False)
+        fake = self._fake_with_routes(self._TABLE)
+        with mock.patch.object(rly, "run", fake), \
+             mock.patch.object(system, "have", side_effect=lambda t: t == "nft"):
+            routes = r.enable(RelayPolicy(scope="custom",
+                                          extra_targets=["203.0.113.5"]))
+        # host LAN rotaları aynalanmaz
+        self.assertFalse(fake.ran("route", "replace", "10.0.15.0/24"))
+        self.assertFalse(fake.ran("route", "replace", "172.16.5.0/24"))
+        # yalnızca elle eklenen hedef aynalanır
+        self.assertTrue(fake.ran("route", "replace", "203.0.113.5/32"))
+        self.assertEqual(routes, ["203.0.113.5/32"])
+
     def test_resolve_extra_ip_cidr_and_bad(self):
         r = rly.Relay(Settings(), dry_run=False)
         with mock.patch("socket.getaddrinfo", side_effect=OSError("nxdomain")):
