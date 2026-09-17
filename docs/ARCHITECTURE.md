@@ -40,16 +40,15 @@ bilinçli olarak Model B'yi seçer.
 │ (tarayıcı)│   (polling)   │ (daemon)   │            │  (orkestratör+watchdog)  │
 └──────────┘                └────────────┘            └────────┬─────────────────┘
                                                                │
-                          ┌────────────────────┬───────────────┼───────────────┐
-                          ▼                    ▼               ▼               ▼
-                     engine.py            relay.py          apps.py        state.py
-                  (ip netns / dhcp)   (veth yan-kanal)   (uygulama        (runtime
+                                     ┌────────────────────────┼───────────────┐
+                                     ▼                        ▼               ▼
+                                engine.py                  apps.py        state.py
+                             (ip netns / dhcp)          (uygulama        (runtime
                                                           başlatma)        durum)
 ```
 
 - **engine.py** — namespace oluştur/sil, arayüz taşı, DHCP, WiFi, durum okuma.
   Tüm `ip netns` komutları burada; orijinal bash mantığının birebir karşılığı.
-- **relay.py** — isteğe bağlı veth çiftiyle host erişimi (aşağıya bakın).
 - **apps.py** — `ip netns exec ... runuser -u <kullanıcı>` ile uygulamayı
   gerçek kullanıcı kimliğiyle ve GUI ortamıyla başlatır; kalıcı profil dizini.
 - **manager.py** — oturum yaşam döngüsü + **watchdog** (dayanıklılık çekirdeği).
@@ -82,35 +81,7 @@ fiziksel arayüze değil. Arayüz gidip gelse de namespace yaşar; uygulamaları
 soketleri kopabilir ama süreçleri yaşamaya devam eder (tarayıcılar otomatik
 yeniden dener). `dhcpcd -w` arka planda kalıp kira süresini yeniler.
 
-## 5. Relay (denetimli host erişimi)
-
-İzolasyon her zaman açıktır. Relay, **opt-in** ve anlık bir kapıdır
-(`relay.py`):
-
-```
-[tether_zone]  tisor-ns ◀══ veth ══▶ tisor-host  [host]
-```
-
-**Tek mod (sadeleştirildi, 2026-07-01):** relay açılınca host'un **ulaştığı tüm
-ağlar (varsayılan/internet rotası HARİÇ)** izole alana aynalanır ve host IP
-forwarding + `nftables`/`iptables` MASQUERADE ile host üzerinden geçirilir:
-
-- İzole uygulamalar, bu makinenin ethernet/tünel üzerinden eriştiği her yere
-  (kurum LAN'ı, kurum OpenVPN tünelleri `tun0`/`tun1` arkasındaki alt ağlar)
-  ulaşır.
-- **Varsayılan rotaya dokunulmaz → internet izole alanın kendi uplink'inde
-  (tether/WiFi) kalır.** İzolasyonun özü korunur.
-- **Ek hedefler** (`extra_targets`): kurum çıkışından erişilen ama tether'den
-  engelli dış adresler (IP/CIDR/alan adı; ör. `mail.havelsan.com.tr`) da host
-  üzerinden geçirilebilir. Alan adları açılışta A kaydına çözülür.
-- **kapalı**: veth çifti + NAT kuralları tamamen silinir → yeniden tam izolasyon.
-
-Kanalın kurulduğunun kanıtı: ns-ucu veth'in (`tisor-ns`) izole alan içinde
-varlığı (`_ns_veth_present`). Eski `host-only`/`lan`/`full` kapsam modeli ve
-`verify_hosts` doğrulaması kaldırıldı (kafa karıştırıyordu). Bu, eski
-`host_relay/` dosya-kuyruğu köprüsünün modern, gerçek-ağ tabanlı halefidir.
-
-## 6. Veri akışı (durum)
+## 5. Veri akışı (durum)
 
 UI her 2 sn'de `/api/status` çeker. Daemon, watchdog her tikte güncellenen
 bellek-içi `RuntimeState`'i döndürür. CLI `status` komutu, daemon olmasa bile

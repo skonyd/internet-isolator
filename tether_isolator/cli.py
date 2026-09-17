@@ -82,7 +82,6 @@ def cmd_status(args, settings: Settings) -> int:
     print(f"İnternet  : {'evet' if data.get('online') else 'hayır'}")
     print(f"Dış IP    : {data.get('public_ip') or '-'}")
     print(f"Yeniden   : {data.get('reconnect_count', 0)} kez bağlanıldı")
-    print(f"Relay     : {'AÇIK ('+data.get('relay_scope','')+')' if data.get('relay_active') else 'kapalı'}")
     return 0
 
 
@@ -136,10 +135,6 @@ def cmd_doctor(args, settings: Settings) -> int:
           hint="sudo apt install wpasupplicant")
     check("wpa_passphrase", system.have("wpa_passphrase"), required=False,
           hint="wpasupplicant")
-
-    print(_c("blue", "Relay (host erişimi için):"))
-    check("nft veya iptables", system.have("nft") or system.have("iptables"),
-          required=False, hint="sudo apt install nftables")
 
     print(_c("blue", "Dış IP doğrulama (isteğe bağlı):"))
     check("curl veya wget", system.have("curl") or system.have("wget"),

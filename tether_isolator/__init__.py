@@ -11,7 +11,6 @@ Modüller:
     config      — profil/ayar yönetimi (JSON)
     state       — çalışma anı durum bilgisi
     engine      — namespace kurulum/yıkım, arayüz taşıma, DHCP, durum
-    relay       — isteğe bağlı veth yan-kanalı (host erişimi)
     apps        — izole alanda uygulama başlatma (kalıcı profiller)
     manager     — orkestratör + watchdog (dayanıklılık)
     server      — yerel HTTP API + web arayüzü

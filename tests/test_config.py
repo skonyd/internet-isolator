@@ -1,24 +1,20 @@
 """config.py testleri: profil serileştirme + ayar yükle/kaydet."""
 import unittest
 
-from tether_isolator.config import Profile, RelayPolicy, Settings
+from tether_isolator.config import Profile, Settings
 from tests._util import IsolatedPaths
 
 
 class TestProfile(unittest.TestCase):
-    def test_from_dict_roundtrip_with_relay(self):
+    def test_from_dict_roundtrip(self):
         src = {
             "name": "iş", "uplink": "wlan0", "uplink_kind": "wifi",
             "apps": ["opera"], "wifi_ssid": "Ev", "wifi_password": "gizli",
-            "relay": {"enabled_by_default": True, "scope": "full"},
         }
         p = Profile.from_dict(src)
         self.assertEqual(p.name, "iş")
         self.assertEqual(p.uplink_kind, "wifi")
         self.assertEqual(p.apps, ["opera"])
-        self.assertIsInstance(p.relay, RelayPolicy)
-        self.assertTrue(p.relay.enabled_by_default)
-        self.assertEqual(p.relay.scope, "full")
 
     def test_from_dict_ignores_unknown_keys(self):
         p = Profile.from_dict({"name": "x", "bogus_key": 123})

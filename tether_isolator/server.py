@@ -30,7 +30,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse
 
 from . import __version__, apps, system, usage
-from .config import Profile, Settings, VPNS_DIR
+from .config import Profile, Settings
 from .engine import EngineError
 from .manager import Manager
 
@@ -73,11 +73,6 @@ def _chown_to_real_user(*paths: str) -> None:
             os.chown(p, pw.pw_uid, pw.pw_gid)
         except OSError:
             pass
-
-
-def _ensure_vpns_dir() -> None:
-    os.makedirs(VPNS_DIR, exist_ok=True)
-    _chown_to_real_user(VPNS_DIR)
 
 
 def _ensure_token() -> str:
@@ -227,10 +222,6 @@ class _Handler(BaseHTTPRequestHandler):
         if path == "/api/interfaces":
             return self._json({"interfaces": [vars(i) for i in
                                               system.list_host_interfaces()]})
-        if path == "/api/vpns":
-            _ensure_vpns_dir()
-            vpns = [f[:-5] for f in os.listdir(VPNS_DIR) if f.endswith(".ovpn")]
-            return self._json({"vpns": vpns})
         if path == "/api/apps/desktop":
             return self._json({"apps": apps.list_desktop_apps()})
         if path == "/api/wifi/saved":
@@ -287,15 +278,12 @@ class _Handler(BaseHTTPRequestHandler):
 
     def _status_payload(self) -> dict:
         s = self.settings
-        _ensure_vpns_dir()
-        all_vpns = [f[:-5] for f in os.listdir(VPNS_DIR) if f.endswith(".ovpn")]
         return {
             "version": __version__,
             "state": self.manager.snapshot(),
             "interfaces": [vars(i) for i in system.list_host_interfaces()],
             "installed_apps": apps.discover_installed(),
             "custom_apps": s.custom_apps,
-            "vpns": all_vpns,
             "profiles": {n: _profile_view(p) for n, p in s.profiles.items()},
             "active_profile": s.active_profile,
             "is_root": system.is_root(),
@@ -398,56 +386,6 @@ class _Handler(BaseHTTPRequestHandler):
             m.stop_session()
             return self._json({"ok": True, "state": m.snapshot()})
 
-        if path == "/api/relay":
-            if body.get("enabled"):
-                # Ek hedefler artık /api/relay/targets/* ile kalıcı olarak
-                # profile.relay.extra_targets içinde tutuluyor; burada elle
-                # geçirmeye gerek yok, mevcut liste kullanılır.
-                m.enable_relay()
-            else:
-                m.disable_relay()
-            return self._json({"ok": True, "state": m.snapshot()})
-
-        if path == "/api/relay/scope":
-            pname = body.get("profile") or s.active_profile
-            prof = s.profile(pname)
-            scope = (body.get("scope") or "").strip()
-            if scope not in ("lan", "custom"):
-                return self._json({"error": "scope 'lan' ya da 'custom' olmalı"}, 400)
-            prof.relay.scope = scope
-            s.save()
-            if prof is m.active_profile:
-                m.set_relay_scope(scope)
-            return self._json({"ok": True, "state": m.snapshot()})
-
-        if path == "/api/relay/targets/add":
-            pname = body.get("profile") or s.active_profile
-            prof = s.profile(pname)
-            raw = body.get("value") or ""
-            values = [v.strip() for v in str(raw).replace(";", ",").split(",")]
-            values = [v for v in values if v]
-            if not values:
-                return self._json({"error": "value gerekli"}, 400)
-            for v in values:
-                if v not in prof.relay.extra_targets:
-                    prof.relay.extra_targets.append(v)
-            s.save()
-            if prof is m.active_profile:
-                m.reassert_relay_routes()
-            return self._json({"ok": True, "state": m.snapshot()})
-
-        if path == "/api/relay/targets/delete":
-            pname = body.get("profile") or s.active_profile
-            prof = s.profile(pname)
-            value = (body.get("value") or "").strip()
-            if not value:
-                return self._json({"error": "value gerekli"}, 400)
-            prof.relay.extra_targets = [v for v in prof.relay.extra_targets if v != value]
-            s.save()
-            if prof is m.active_profile:
-                m.remove_relay_target(value)
-            return self._json({"ok": True, "state": m.snapshot()})
-
         if path == "/api/data-saver":
             pname = body.get("profile") or s.active_profile
             prof = s.profile(pname)
@@ -535,51 +473,6 @@ class _Handler(BaseHTTPRequestHandler):
             s.save()
             return self._json({"ok": True})
 
-        if path == "/api/vpn":
-            name = body.get("name")
-            if not name:
-                return self._json({"error": "VPN adı (name) belirtilmedi"}, 400)
-            if body.get("enabled"):
-                m.connect_vpn(name)
-            else:
-                m.disconnect_vpn(name)
-            return self._json({"ok": True, "state": m.snapshot()})
-
-        if path == "/api/vpns/upload":
-            name = body.get("name")
-            content = body.get("content")
-            if not name or not content:
-                return self._json({"error": "name ve content gerekli"}, 400)
-            import re
-            name = re.sub(r"[^a-zA-Z0-9_-]", "", name)
-            if not name:
-                return self._json({"error": "geçersiz VPN adı"}, 400)
-            _ensure_vpns_dir()
-            vpath = os.path.join(VPNS_DIR, f"{name}.ovpn")
-            with open(vpath, "w") as f:
-                f.write(content)
-            # .ovpn dosyaları sertifika/parola içerebilir; token/config.json ile
-            # aynı G-3 duruşu: 0600 + gerçek kullanıcıya chown (root varsayılan
-            # umask'ıyla oluşturulursa diğer yerel kullanıcılar okuyabilirdi).
-            os.chmod(vpath, 0o600)
-            _chown_to_real_user(VPNS_DIR, vpath)
-            return self._json({"ok": True, "state": m.snapshot()})
-
-        if path == "/api/vpns/delete":
-            name = body.get("name")
-            if not name:
-                return self._json({"error": "name gerekli"}, 400)
-            import re
-            name = re.sub(r"[^a-zA-Z0-9_-]", "", name)
-            vpath = os.path.join(VPNS_DIR, f"{name}.ovpn")
-            if os.path.exists(vpath):
-                os.remove(vpath)
-            try:
-                m.disconnect_vpn(name)
-            except Exception:
-                pass
-            return self._json({"ok": True, "state": m.snapshot()})
-
         if path == "/api/apps/custom/add":
             name = (body.get("name") or "").strip()
             command = (body.get("command") or "").strip()
@@ -665,7 +558,7 @@ class _Handler(BaseHTTPRequestHandler):
 
         if path == "/api/restart":
             # Yeniden başlat = TAM SIFIRLAMA. İzole oturum (namespace, uplink,
-            # uygulamalar, relay, VPN) tamamen yıkılır, arka plan servisleri
+            # uygulamalar) tamamen yıkılır, arka plan servisleri
             # (watchdog, DHCP/wpa_supplicant) durdurulur, sonra daemon süreci
             # kendi üzerine yeniden başlatılır (execv) ve TEMİZ bir durumla
             # açılır. Üç eylemin farkı:

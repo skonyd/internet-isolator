@@ -1,7 +1,7 @@
 """Profil ve ayar yönetimi.
 
 Bir *profil*, izole bir oturumun tüm tanımıdır: hangi uplink, hangi
-uygulamalar, DNS, relay politikası vb. Profiller kalıcıdır (silinmez);
+uygulamalar, DNS vb. Profiller kalıcıdır (silinmez);
 böylece kullanıcı "iş", "kişisel" gibi birden çok kayıtlı yapılandırmayı
 tekrar tekrar kullanabilir. Uygulama profil dizinleri de kalıcıdır; yani
 tarayıcı oturumları/oturum açmaları korunur.
@@ -39,32 +39,11 @@ def _default_config_dir() -> str:
 
 CONFIG_DIR = _default_config_dir()
 CONFIG_FILE = os.path.join(CONFIG_DIR, "config.json")
-VPNS_DIR = os.path.join(CONFIG_DIR, "vpns")
 
 
 def _data_dir_for(username: str) -> str:
     home = system.user_home(username)
     return os.path.join(home, ".local", "share", "tether-isolator")
-
-
-@dataclass
-class RelayPolicy:
-    """Relay davranışı.
-
-    Relay açıldığında izole alan, `scope`'a göre ya bu makinenin ULAŞTIĞI TÜM
-    LAN ağlarına (varsayılan rota HARİÇ, scope="lan") ya da yalnızca kullanıcının
-    elle eklediği `extra_targets` hedeflerine (scope="custom") erişir; internet
-    izole alanın kendi uplink'inde kalır. Aşağıdaki eski alanlar yalnızca geriye
-    dönük profil uyumluluğu için tutulur (artık kullanılmaz).
-    """
-    enabled_by_default: bool = False
-    host_subnet: str = "10.77.0.0/30"   # veth yan-kanalı için özel /30
-    extra_targets: list[str] = field(default_factory=list)
-    scope: str = "lan"   # "lan" = host'un tüm LAN rotaları | "custom" = yalnızca extra_targets
-    # --- eski alanlar (kullanılmıyor, eski profiller yüklensin diye korunur) ---
-    lan_targets: list[str] = field(default_factory=list)
-    verify_hosts: list[str] = field(default_factory=list)
-    allowed_domains: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -111,9 +90,6 @@ class Profile:
     persistent_profile: bool = True
     use_system_profile: bool = False
     auto_reconnect: bool = True
-    vpn_config: str = ""
-    vpn_required: bool = False       # H-3: VPN zorunluysa düşünce kill-switch
-    relay: RelayPolicy = field(default_factory=RelayPolicy)
     data_saver: DataSaverPolicy = field(default_factory=DataSaverPolicy)
 
     def profile_data_dir(self, username: str) -> str:
@@ -122,11 +98,8 @@ class Profile:
     @classmethod
     def from_dict(cls, d: dict) -> "Profile":
         d = dict(d)
-        relay = d.pop("relay", {}) or {}
         data_saver = d.pop("data_saver", {}) or {}
         prof = cls(**{k: v for k, v in d.items() if k in cls.__annotations__})
-        prof.relay = RelayPolicy(**{k: v for k, v in relay.items()
-                                    if k in RelayPolicy.__annotations__})
         # Geriye dönük uyumluluk: eski profillerde media_level yerine boolean
         # `block_media` vardı. Açık olan eski profiller en katı kademeye eşlenir.
         legacy_block = data_saver.pop("block_media", None)

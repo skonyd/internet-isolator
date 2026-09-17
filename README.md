@@ -4,8 +4,8 @@
 
 Belirli uygulamaları, **host'un kablolu bağlantısından yapısal olarak izole**
 bir ağ alanında, yalnızca seçtiğiniz bir uplink (telefon USB tether / WiFi)
-üzerinden çalıştıran araç. Apple-esinli bir web paneli, otomatik yeniden
-bağlanma ve isteğe bağlı denetimli "relay" kanalı ile birlikte gelir.
+üzerinden çalıştıran araç. Apple-esinli bir web paneli ve otomatik yeniden
+bağlanma ile birlikte gelir.
 
 > Bu proje, `tether_isolator.sh` / `tether_isolator_v2.sh` bash scriptlerinin
 > profesyonel, modüler ve test edilebilir bir Python yeniden yazımıdır.
@@ -39,8 +39,6 @@ Ayrıntı: [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
 - 🔒 **Yapısal izolasyon** — uplink fiziksel olarak namespace içinde.
 - ♻️ **Otomatik yeniden bağlanma** — telefon çıkıp takıldığında uygulamaları
   **öldürmeden** arayüzü geri alır, DHCP'yi yeniler (watchdog).
-- 🌉 **Denetimli relay** — gerektiğinde tek tıkla host/LAN (veya tam internet)
-  erişimi; kapalıyken tam izole. Eski dosya-kuyruğu hack'inin yerine geçer.
 - 💾 **Kalıcı profiller** — tarayıcı oturumları silinmez; "iş"/"kişisel" gibi
   birden çok kayıtlı yapılandırma.
 - 🖥️ **Apple-esinli web paneli** — canlı durum, dış IP, olay akışı.
@@ -89,7 +87,6 @@ tether_isolator/      Python paketi (çekirdek motor + API + CLI)
   ├── config.py       profil/ayar yönetimi
   ├── state.py        çalışma anı durumu
   ├── engine.py       namespace yaşam döngüsü (Model B)
-  ├── relay.py        veth relay yan-kanalı
   ├── apps.py         izole alanda uygulama başlatma
   ├── manager.py      orkestratör + watchdog (dayanıklılık)
   ├── server.py       yerel HTTP API + web sunumu
@@ -102,8 +99,7 @@ legacy/               orijinal bash scriptleri (korunmuş)
 ```
 
 Gereksinimler: Python 3.10+, `iproute2`, `dhcpcd` (veya `udhcpc`).
-WiFi uplink için: `wpa_supplicant`, `iw`. Relay için: `nftables` (yoksa `iptables`).
-İzole alanda VPN için: `openvpn` (2.6+). Python tarafında **harici bağımlılık
+WiFi uplink için: `wpa_supplicant`, `iw`. Python tarafında **harici bağımlılık
 yoktur** (yalnızca standart kütüphane).
 
 ## Lisans

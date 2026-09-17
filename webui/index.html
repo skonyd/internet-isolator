@@ -48,24 +48,6 @@
     </div>
   </div>
 
-  <!-- AĞ EKLE (RELAY EK HEDEF) -->
-  <div id="netPicker" class="command-palette" hidden>
-    <div id="netPickerOverlay" class="cp-overlay"></div>
-    <div class="cp-box">
-      <div class="cp-header">
-        <span class="cp-title">AĞ EKLE</span>
-        <button id="netPickerCloseBtn" class="btn ghost-btn btn-sm cp-close" type="button">✕ Kapat (Esc)</button>
-      </div>
-      <div class="cp-footer" style="border-top:none">
-        <p class="muted hint-sm cp-footer-hint">IP, CIDR (10.0.15.0/24) ya da alan adı — virgülle birden fazla eklenebilir.</p>
-        <div class="cp-manual-row">
-          <input type="text" id="netPickerInput" class="text-input" placeholder="ör. mail.havelsan.com.tr, 195.214.160.160" autocomplete="off" spellcheck="false" style="flex:1">
-          <button id="netPickerAddBtn" class="btn ghost-btn btn-sm" type="button">Ekle</button>
-        </div>
-      </div>
-    </div>
-  </div>
-
   <!-- WI-FI KİMLİK DOĞRULAMA (GNOME "Authentication Required" muadili) -->
   <div id="wifiAuth" class="command-palette" hidden>
     <div id="wifiAuthOverlay" class="cp-overlay"></div>
@@ -146,7 +128,7 @@
       <span id="rootBadge" class="badge">—</span>
       <span id="versionBadge" class="badge ghost">v—</span>
       <button id="themeToggle" class="theme-btn" title="Temayı değiştir (U-15)">🌓</button>
-      <button id="restartBtn" class="quit-btn" title="Her şeyi sıfırla — izole oturum, uygulamalar, relay ve VPN durdurulur, uygulama temiz başlar (güncel kodu da yükler)">⟳ Yeniden Başlat</button>
+      <button id="restartBtn" class="quit-btn" title="Her şeyi sıfırla — izole oturum ve uygulamalar durdurulur, uygulama temiz başlar (güncel kodu da yükler)">⟳ Yeniden Başlat</button>
       <button id="quitBtn" class="quit-btn" title="Paneli kapat — izole oturum arka planda çalışmaya devam eder">Çıkış</button>
     </div>
   </div>
@@ -240,7 +222,7 @@
           "geç" dersen uygulamalar kapanmadan yeni bağlantıya taşınır.</p>
       </section>
 
-      <!-- BAĞLANTI & RELAY -->
+      <!-- BAĞLANTI -->
       <section class="card" id="connCard">
         <h3>Bağlantı</h3>
         <dl class="detail">
@@ -341,56 +323,6 @@
           <p class="muted hint-sm" id="dataSaverQuotaText"></p>
         </div>
 
-        <div class="relay-box">
-          <div class="relay-head">
-            <div>
-              <h4>Relay (kurum ağı erişimi)</h4>
-              <p class="muted" id="relayHint">Kapalıyken tam izole.</p>
-            </div>
-            <label class="switch">
-              <input type="checkbox" id="relayToggle" disabled>
-              <span class="slider"></span>
-            </label>
-          </div>
-          <p class="muted hint-sm" style="margin-top:12px">Açıldığında izole alandaki uygulamalar, kapsam seçimine göre bu bilgisayarın <b>ulaştığı ağlara</b> erişir. <b>İnternet değişmez</b> — izole alanın tether/WiFi bağlantısında kalır.</p>
-
-          <label class="field-label" style="margin-top:12px">Kapsam</label>
-          <div class="relay-scope-options" id="relayScopeOptions">
-            <label class="radio-row">
-              <input type="radio" name="relayScope" id="relayScopeCustom" value="custom">
-              <span>Yalnızca aşağıda eklediğim ağlar</span>
-            </label>
-            <label class="radio-row">
-              <input type="radio" name="relayScope" id="relayScopeLan" value="lan">
-              <span>Bu bilgisayarın ulaştığı tüm LAN ağları</span>
-            </label>
-          </div>
-
-          <label class="field-label" style="margin-top:12px">Ek hedefler<span id="relayExtraLabelHint" class="muted"></span></label>
-          <div id="relayExtraList" class="chip-list"></div>
-          <div style="margin-top:8px">
-            <button id="addRelayTargetBtn" class="btn ghost-btn btn-sm" type="button">+ Ağ Ekle</button>
-          </div>
-          <p class="muted hint-sm" id="relayRoutes"></p>
-        </div>
-
-        <div class="relay-box vpn-box">
-          <div class="relay-head">
-            <div>
-              <h4>VPN Bağlantıları</h4>
-              <p class="muted">İzole alan içinden şifreli tüneller.</p>
-            </div>
-          </div>
-          <div id="vpnList" class="vpn-list">
-            <p class="muted hint-sm">Yükleniyor...</p>
-          </div>
-          
-          <div style="margin-top: 12px;">
-            <button id="addVpnBtn" class="btn ghost-btn btn-sm" disabled>+ VPN İçe Aktar (.ovpn)</button>
-            <input type="file" id="vpnFileInput" accept=".ovpn" style="display:none">
-          </div>
-          <p class="muted hint-sm" style="margin-top:8px">İzole alanın uplink'i üzerinden bağlanır; birden fazla tünel eşzamanlı açık olabilir.</p>
-        </div>
       </section>
     </div>
 
@@ -408,7 +340,7 @@
 
   <footer>
     <span id="connState" class="conn-state">● daemon'a bağlanılıyor…</span>
-    <span class="dim">Tether Isolator — yapısal izolasyon (Model B) + denetimli relay</span>
+    <span class="dim">Tether Isolator — yapısal izolasyon (Model B)</span>
   </footer>
 
   <script src="/app.js"></script>

@@ -2,7 +2,6 @@
 
 Sorumluluklar:
   * start_session / stop_session
-  * relay aç/kapa
   * sürekli çalışan watchdog (dayanıklılık): uplink kopup geri geldiğinde
     uygulamaları ÖLDÜRMEDEN arayüzü tekrar namespace'e alıp DHCP'yi yeniler.
 
@@ -15,7 +14,6 @@ tarayıcılar kendiliğinden yeniden dener.
 Güvenlik:
   - Kill-switch (G-6): uplink yokken blackhole rota → paket sızmaz
   - IPv6 sızıntı kapatma (G-7): namespace içinde IPv6 devre dışı
-  - VPN watchdog (H-3): VPN düşünce yeniden bağlan veya kill-switch
 """
 from __future__ import annotations
 
@@ -27,11 +25,9 @@ import threading
 import time
 
 from . import apps, shaping, system, usage
-from .config import DataSaverPolicy, Profile, Settings, VPNS_DIR
+from .config import DataSaverPolicy, Profile, Settings
 from .engine import Engine, EngineError
-from .relay import Relay
 from .state import AppProcess, RuntimeState
-from .vpn import VPN
 
 # Veri tasarrufu seviyesi -> watchdog aralığı (saniye) / dış IP önbellek TTL'i
 _DATA_SAVER_WATCHDOG_SEC = {"light": None, "balanced": 10, "strict": 20}
@@ -57,8 +53,6 @@ class Manager:
         self.s = settings
         self.dry = dry_run
         self.engine = Engine(settings, dry_run=dry_run)
-        self.relay = Relay(settings, dry_run=dry_run)
-        self.vpn = VPN(settings, dry_run=dry_run)
         self.state = RuntimeState(namespace=settings.namespace)
         self._lock = threading.RLock()
         self._wd_stop = threading.Event()
@@ -136,13 +130,6 @@ class Manager:
 
         with self._lock:
             self._refresh_network()
-            if profile.relay.enabled_by_default:
-                self.enable_relay(profile)
-
-            # Not: VPN'ler artık panelden ADA göre yönetiliyor (çoklu VPN, VPNS_DIR
-            # altında <ad>.ovpn). Oturum başlarken otomatik bağlanma yok; kullanıcı
-            # istediği tüneli panelden açar. (Eski path-tabanlı profile.vpn_config
-            # otomatik bağlanması yeni ad-tabanlı connect_vpn ile uyumsuzdu.)
 
             # Uygulamaları başlat
             for prog in profile.apps:
@@ -171,111 +158,12 @@ class Manager:
             self.state.phase = "stopping"
             self._stop_watchdog()
             self._terminate_apps()
-            try:
-                for v in self.state.vpns:
-                    if v.get("active"):
-                        self.vpn.disconnect(v["name"])
-            except Exception as e:  # noqa: BLE001
-                log.warning("VPN'ler kapatılırken: %s", e)
-            try:
-                self.relay.disable()
-            except Exception as e:  # noqa: BLE001
-                log.warning("relay kapatılırken: %s", e)
             self._remove_shaping(self._active_iface)
             self.engine.teardown(self._active_iface)
             self._event("ok", "Her şey eski haline döndü.")
             self.state = RuntimeState(phase="idle", namespace=self.s.namespace)
             self._active_iface = None
             self._active_profile = None
-            self.state.persist()
-
-    # ---------------------------------------------------------------- relay
-    def enable_relay(self, profile: Profile | None = None,
-                     extra_targets: list[str] | None = None) -> None:
-        with self._lock:
-            prof = profile or self._active_profile
-            if not prof:
-                raise EngineError("Etkin oturum yok.")
-            if extra_targets is not None:
-                prof.relay.extra_targets = list(extra_targets)
-            try:
-                routes = self.relay.enable(prof.relay)
-            except Exception as e:
-                self.state.relay_active = False
-                self.state.relay_targets = []
-                self._event("error", f"Relay açılamadı: {e}")
-                self.state.persist()
-                raise
-
-            self.state.relay_active = True
-            self.state.relay_scope = prof.relay.scope
-            self.state.relay_targets = list(routes)
-            if routes:
-                detail = f" → {', '.join(routes)}"
-            else:
-                detail = (" (uyarı: bu makine şu an LAN'a bağlı görünmüyor; "
-                          "ethernet kablosu takılı mı?)")
-            self._event("ok", f"Relay açıldı{detail}. İnternet tether'de.")
-            self.state.persist()
-
-    def reassert_relay_routes(self) -> None:
-        """Relay rotalarını (LAN + ek hedefler) tazeler; her yerden çağrılabilir.
-
-        VPN istemcisi ns İÇİNDE çalışır ve kendi push route'larını ekler; bu
-        rotalar relay'in host-LAN rotalarının üzerine yazabilir. Ayrıca
-        kullanıcı ek hedef listesini relay AÇIKKEN değiştirirse (bkz.
-        /api/relay/targets/*) yeni hedefin hemen etkin olması için de bu
-        çağrılır. Relay aktifse rotaları burada yeniden uygulayarak kurum
-        hedeflerinin host LAN üzerinden gitmeye devam etmesini sağlarız.
-        """
-        with self._lock:
-            self._reassert_relay_routes_locked()
-
-    def set_relay_scope(self, scope: str) -> None:
-        """Relay kapsamını değiştirir: "lan" (tüm host LAN rotaları) ya da
-        "custom" (yalnızca elle eklenen extra_targets). Relay AÇIKKEN
-        çağrılırsa kanal yeniden kurulur (reassert değil): "lan"dan "custom"a
-        geçişte artık listede olmayan LAN rotalarının ns içinde asılı
-        kalmaması gerekir; reassert yalnızca ekler/üzerine yazar, silmez."""
-        with self._lock:
-            prof = self._active_profile
-            if not prof:
-                return
-            prof.relay.scope = scope
-            if self.state.relay_active:
-                self.relay.disable()
-                routes = self.relay.enable(prof.relay)
-                self.state.relay_scope = scope
-                self.state.relay_targets = list(routes)
-
-    def remove_relay_target(self, value: str) -> None:
-        """Ek hedef listeden kaldırıldığında (relay AÇIKKEN) eski rotayı da siler."""
-        with self._lock:
-            if not self.state.relay_active or not self._active_profile:
-                return
-            try:
-                self.relay.remove_extra_target(self._active_profile.relay, value)
-            except Exception as e:  # noqa: BLE001
-                log.warning("relay hedef rotası silinirken: %s", e)
-            self._reassert_relay_routes_locked()
-
-    def _reassert_relay_routes_locked(self) -> None:
-        if not self.state.relay_active or not self._active_profile:
-            return
-        try:
-            routes = self.relay.reassert_routes(self._active_profile.relay)
-            if routes:
-                self.state.relay_targets = list(routes)
-        except Exception as e:  # noqa: BLE001
-            log.warning("relay rotaları tazelenirken: %s", e)
-
-    def disable_relay(self) -> None:
-        with self._lock:
-            self.relay.disable()
-            self.state.relay_active = False
-            self.state.relay_scope = ""
-            self.state.relay_targets = []
-            self._event("info", "Relay kapatıldı; tam izolasyon.")
             self.state.persist()
 
     # ------------------------------------------------- bant genişliği tavanı (Faz 4)
@@ -363,44 +251,6 @@ class Manager:
             self._apply_shaping(iface)
             self.state.persist()
 
-    # ---------------------------------------------------------------- VPN
-    def _update_vpn_state(self, name: str, st: dict) -> None:
-        st["name"] = name
-        for i, v in enumerate(self.state.vpns):
-            if v["name"] == name:
-                self.state.vpns[i] = st
-                return
-        self.state.vpns.append(st)
-
-    def connect_vpn(self, name: str) -> None:
-        """İzole alan içinde belirtilen isimle OpenVPN başlatır."""
-        with self._lock:
-            if self.state.phase in ("idle", "stopping"):
-                raise EngineError("Etkin oturum yok; önce başlatın.")
-            path = os.path.join(VPNS_DIR, f"{name}.ovpn")
-            if not os.path.exists(path):
-                raise EngineError(f"VPN dosyası bulunamadı: {name}.ovpn")
-            self._event("info", f"VPN bağlanıyor: {name}")
-            try:
-                self.vpn.connect(name, path)
-            except Exception as e:
-                self._update_vpn_state(name, {"active": False})
-                self._event("error", f"VPN '{name}' bağlanamadı: {e}")
-                self.state.persist()
-                raise
-            st = self.vpn.status(name)
-            self._update_vpn_state(name, st)
-            self._reassert_relay_routes_locked()
-            self._event("ok", f"VPN '{name}' bağlandı ({st.get('iface')} {st.get('ip')}).")
-            self.state.persist()
-
-    def disconnect_vpn(self, name: str) -> None:
-        with self._lock:
-            self.vpn.disconnect(name)
-            self._update_vpn_state(name, {"active": False})
-            self._event("info", f"VPN '{name}' kapatıldı.")
-            self.state.persist()
-
     # ------------------------------------------------------------- devralma
     def adopt_if_running(self) -> bool:
         if self.dry:
@@ -433,13 +283,7 @@ class Manager:
             self._event("info", f"Mevcut oturum devralındı (uplink={uplink}); "
                                 f"kaldığın yerden devam.")
             self._refresh_network()
-            self.state.relay_active = self.relay.is_active()
             self._apply_shaping(uplink)   # daemon yeniden başlarken ayarla senkronize et
-            for v in prev.get("vpns", []):
-                name = v.get("name")
-                if name and self.vpn.is_active(name):
-                    st = self.vpn.status(name)
-                    self._update_vpn_state(name, st)
             self.state.phase = "online" if self.state.online else "degraded"
             self.state.persist()
             if self._active_profile.auto_reconnect:
@@ -720,26 +564,6 @@ class Manager:
                 self.state.phase = "online" if self.state.online else "degraded"
             else:
                 self.state.phase = "online"
-                # VPN watchdog (H-3): VPN aktif ama düşmüşse yeniden bağlan
-                for v in self.state.vpns:
-                    if v.get("active"):
-                        name = v["name"]
-                        if not self.vpn.is_active(name):
-                            self._event("warn", f"VPN '{name}' düştü, yeniden bağlanılıyor...")
-                            try:
-                                self.connect_vpn(name)
-                            except Exception as e:  # noqa: BLE001
-                                self._event("error", f"VPN '{name}' yeniden bağlanamadı: {e}")
-                                prof = self._active_profile
-                                if getattr(prof, "vpn_required", False):
-                                    self._apply_kill_switch()
-
-            # Relay durumunu gerçeğe göre uzlaştır
-            if self.state.relay_active and not self.dry and not self.relay.is_active():
-                self.state.relay_active = False
-                self.state.relay_scope = ""
-                self.state.relay_targets = []
-                self._event("warn", "Relay kanalı düştü; tam izolasyona dönüldü.")
 
             # Bant genişliği tavanını gerçeğe göre uzlaştır (Faz 4) — arayüz
             # sıfırlanmış (ör. WiFi yeniden ilişkilendirme) olabilir; kurallar

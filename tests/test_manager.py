@@ -72,48 +72,6 @@ class TestManagerContinuity(unittest.TestCase):
             m.switch_uplink("wlan0")
 
 
-class TestManagerRelay(unittest.TestCase):
-    def test_relay_dry_mirrors_routes(self):
-        m = Manager(Settings(), dry_run=True)
-        m.start_session(_prof(name="d", uplink="usb0", apps=[]), "usb0")
-        m.enable_relay()
-        st = m.snapshot()
-        self.assertTrue(st["relay_active"])
-        # dry _host_lan_routes → ["10.0.0.0/24"] aynalanır
-        self.assertEqual(st["relay_targets"], ["10.0.0.0/24"])
-        m.disable_relay()
-        self.assertFalse(m.snapshot()["relay_active"])
-        self.assertEqual(m.snapshot()["relay_targets"], [])
-
-    def test_relay_reports_mirrored_routes(self):
-        m = Manager(Settings(), dry_run=False)
-        m._active_profile = _prof(name="d", uplink="usb0")
-        m._active_iface = "usb0"
-        m.state.phase = "online"
-        m.relay.enable = lambda policy: ["10.0.15.0/24", "172.16.5.0/24"]
-        m.enable_relay()
-        st = m.snapshot()
-        self.assertTrue(st["relay_active"])
-        self.assertEqual(st["relay_targets"], ["10.0.15.0/24", "172.16.5.0/24"])
-
-    def test_relay_enable_failure_leaves_inactive(self):
-        m = Manager(Settings(), dry_run=False)
-        m._active_profile = _prof(name="d", uplink="usb0")
-        m._active_iface = "usb0"
-        m.state.phase = "online"
-        def _boom(policy):
-            raise EngineError("bayat namespace")
-        m.relay.enable = _boom
-        with self.assertRaises(EngineError):
-            m.enable_relay()
-        self.assertFalse(m.snapshot()["relay_active"])
-
-    def test_relay_without_session_rejected(self):
-        m = Manager(Settings(), dry_run=False)
-        with self.assertRaises(EngineError):
-            m.enable_relay()
-
-
 class TestManagerResilience(unittest.TestCase):
     def test_start_failure_cleans_up_and_allows_retry(self):
         m = Manager(Settings(), dry_run=True)
@@ -157,33 +115,6 @@ class TestManagerResilience(unittest.TestCase):
         self.assertIsNotNone(proc.poll())   # süreç sonlandırıldı (orphan kalmadı)
 
 
-class TestManagerVPN(unittest.TestCase):
-    def test_connect_disconnect_vpn(self):
-        # Çoklu VPN: tüneller ada göre yönetilir; durum state.vpns listesinde tutulur.
-        m = Manager(Settings(), dry_run=False)
-        m._active_profile = _prof(name="d", uplink="usb0")
-        m._active_iface = "usb0"
-        m.state.phase = "online"
-        m.vpn.connect = lambda name, path: None
-        m.vpn.status = lambda name: {"active": True, "iface": "vpn-garageliman",
-                                     "ip": "10.8.0.2/24"}
-        with mock.patch("os.path.exists", return_value=True):
-            m.connect_vpn("garageliman")
-        vpns = m.snapshot()["vpns"]
-        self.assertEqual(len(vpns), 1)
-        self.assertTrue(vpns[0]["active"])
-        self.assertEqual(vpns[0]["name"], "garageliman")
-        self.assertEqual(vpns[0]["iface"], "vpn-garageliman")
-        m.vpn.disconnect = lambda name: None
-        m.disconnect_vpn("garageliman")
-        self.assertFalse(m.snapshot()["vpns"][0]["active"])
-
-    def test_connect_vpn_without_session_rejected(self):
-        m = Manager(Settings(), dry_run=False)
-        with self.assertRaises(EngineError):
-            m.connect_vpn("x")
-
-
 class TestManagerAdoption(unittest.TestCase):
     def test_adopt_resumes_existing_session(self):
         with IsolatedPaths():
@@ -197,8 +128,7 @@ class TestManagerAdoption(unittest.TestCase):
             with mock.patch.object(system, "namespace_exists", return_value=True), \
                  mock.patch.object(system, "interface_in_namespace", return_value=True), \
                  mock.patch.object(m, "_refresh_network",
-                                   side_effect=lambda light=False: setattr(m.state, "online", True)), \
-                 mock.patch.object(m.relay, "is_active", return_value=False):
+                                   side_effect=lambda light=False: setattr(m.state, "online", True)):
                 adopted = m.adopt_if_running()
 
             self.assertTrue(adopted)

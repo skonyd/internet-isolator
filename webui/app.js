@@ -788,36 +788,9 @@ function renderState(d) {
   updateActionButtons();
   $("reconnectBtn").disabled = busy || !running;
   $("speedTestBtn").disabled = busy || !running || !st.online;
-  $("relayToggle").disabled = busy || !running;
-  $("relayToggle").checked = !!st.relay_active;
-  const relayPolicy = d.profiles?.[d.active_profile]?.relay || {};
-  renderRelayTargets(relayPolicy.extra_targets || []);
-  const relayScope = relayPolicy.scope === "custom" ? "custom" : "lan";
-  $("relayScopeCustom").checked = relayScope === "custom";
-  $("relayScopeLan").checked = relayScope === "lan";
-  $("relayScopeCustom").disabled = busy;
-  $("relayScopeLan").disabled = busy;
-  $("relayExtraLabelHint").textContent = relayScope === "custom"
-    ? " (yalnızca bunlar aynalanır)" : " (LAN'a ek olarak aynalanır)";
-
-  // Çoklu VPN Render
-  if (d.vpns) {
-    renderVpnList(d.vpns, st.vpns || [], running);
-  }
 
   // Veri tasarrufu (Faz 1+2+3)
   renderDataSaver((d.profiles?.[d.active_profile]?.data_saver) || {}, st, running);
-
-  const routes = st.relay_targets || [];
-  if (st.relay_active) {
-    $("relayHint").textContent = "Açık — kurum ağı erişimi var, internet tether'de.";
-    $("relayRoutes").textContent = routes.length
-      ? `Aynalanan ağlar: ${routes.join(", ")}`
-      : "Uyarı: LAN'a bağlı görünmüyor (ethernet takılı mı?).";
-  } else {
-    $("relayHint").textContent = "Kapalıyken tam izole.";
-    $("relayRoutes").textContent = "";
-  }
 
   renderEvents(st.events || []);
 }
@@ -1008,54 +981,6 @@ $("uplinkRefreshBtn").onclick = async () => {
     setTimeout(() => btn.classList.remove("spinning"), wait);
   }
 };
-
-$("relayToggle").onchange = (e) => withBusy(async () => {
-  await api("/api/relay", {
-    method: "POST", headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ enabled: e.target.checked }),
-  });
-});
-
-document.querySelectorAll('input[name="relayScope"]').forEach((el) => {
-  el.onchange = (e) => withBusy(async () => {
-    await api("/api/relay/scope", {
-      method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ scope: e.target.value }),
-    });
-  });
-});
-
-// ------------------------------------------------------ Relay ek hedefler
-function renderRelayTargets(targets) {
-  const box = $("relayExtraList");
-  box.innerHTML = "";
-  if (!targets.length) {
-    box.innerHTML = '<span class="chip empty">ek hedef yok</span>';
-    return;
-  }
-  targets.forEach((t) => {
-    const el = document.createElement("span");
-    el.className = "chip";
-    el.appendChild(document.createTextNode(`🌐 ${t}`));
-    const del = document.createElement("span");
-    del.textContent = " ×";
-    del.title = "Listeden kaldır";
-    del.style.opacity = "0.6";
-    del.style.cursor = "pointer";
-    del.onclick = (ev) => {
-      ev.stopPropagation();
-      withBusy(async () => {
-        if (!confirm(`'${t}' listeden kaldırılsın mı?`)) return;
-        await api("/api/relay/targets/delete", {
-          method: "POST", headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ value: t }),
-        });
-      });
-    };
-    el.appendChild(del);
-    box.appendChild(el);
-  });
-}
 
 // ------------------------------------------------------- Veri tasarrufu
 const LEVEL_LABEL = { light: "Hafif", balanced: "Dengeli", strict: "Katı" };
@@ -1302,139 +1227,9 @@ $("dataSaverRestartAppsBtn").onclick = () => withBusy(async () => {
   showToast(`${(r.started || []).length} uygulama yeniden başlatıldı.`, "info");
 });
 
-function closeNetPicker() { $("netPicker").hidden = true; }
-
-function openNetPicker() {
-  $("netPicker").hidden = false;
-  $("netPickerInput").value = "";
-  $("netPickerInput").focus();
-}
-
-$("addRelayTargetBtn").onclick = () => openNetPicker();
-$("netPickerCloseBtn").addEventListener("click", closeNetPicker);
-$("netPickerOverlay").addEventListener("click", closeNetPicker);
-
-async function addRelayTarget() {
-  const value = $("netPickerInput").value.trim();
-  if (!value) return;
-  await withBusy(async () => {
-    await api("/api/relay/targets/add", {
-      method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ value }),
-    });
-  });
-  closeNetPicker();
-}
-
-$("netPickerAddBtn").onclick = () => addRelayTarget();
-$("netPickerInput").addEventListener("keydown", (e) => {
-  if (e.key === "Enter") { e.preventDefault(); addRelayTarget(); }
-});
-
 $("reconnectBtn").onclick = () => withBusy(async () => {
   await api("/api/reconnect", { method: "POST", headers: { "Content-Type": "application/json" } });
 });
-
-$("addVpnBtn").onclick = () => {
-  $("vpnFileInput").click();
-};
-
-$("vpnFileInput").onchange = async (e) => {
-  const file = e.target.files[0];
-  if (!file) return;
-  
-  // Dosya adından uzantıyı çıkar
-  const name = file.name.replace(".ovpn", "");
-  
-  const reader = new FileReader();
-  reader.onload = async (ev) => {
-    const content = ev.target.result;
-    await withBusy(async () => {
-      await api("/api/vpns/upload", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name, content }),
-      });
-      showToast(`${name} başarıyla eklendi`, "info");
-    });
-  };
-  reader.readAsText(file);
-  e.target.value = ""; // Aynı dosyayı tekrar seçebilmek için
-};
-
-function renderVpnList(allVpns, activeStates, isRunning) {
-  const list = $("vpnList");
-  list.innerHTML = "";
-  
-  if (allVpns.length === 0) {
-    list.innerHTML = '<p class="muted hint-sm">Henüz VPN eklenmedi.</p>';
-  }
-  
-  $("addVpnBtn").disabled = busy;
-  
-  allVpns.forEach(vpnName => {
-    const st = activeStates.find(v => v.name === vpnName) || { active: false };
-    
-    const row = document.createElement("div");
-    row.className = "vpn-row";
-    row.style = "display: flex; justify-content: space-between; align-items: center; padding: 8px 0; border-bottom: 1px solid var(--border);";
-    
-    const left = document.createElement("div");
-    
-    const title = document.createElement("div");
-    title.style = "font-weight: 500; display: flex; align-items: center; gap: 8px;";
-    title.textContent = vpnName;
-    
-    const delBtn = document.createElement("button");
-    delBtn.className = "btn ghost-btn";
-    delBtn.style = "padding: 2px 6px; font-size: 10px; color: var(--danger);";
-    delBtn.textContent = "Sil";
-    delBtn.disabled = busy;
-    delBtn.onclick = () => withBusy(async () => {
-      if (!confirm(`'${vpnName}' silinsin mi?`)) return;
-      await api("/api/vpns/delete", {
-        method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name: vpnName })
-      });
-    });
-    title.appendChild(delBtn);
-    left.appendChild(title);
-    
-    const hint = document.createElement("div");
-    hint.className = "muted hint-sm";
-    hint.textContent = st.active 
-      ? `Bağlı — ${fmt(st.iface)} ${fmt(st.ip)}` 
-      : "Kapalı";
-    left.appendChild(hint);
-    
-    const right = document.createElement("div");
-    const label = document.createElement("label");
-    label.className = "switch";
-    
-    const cb = document.createElement("input");
-    cb.type = "checkbox";
-    cb.checked = st.active;
-    cb.disabled = busy || !isRunning;
-    
-    cb.onchange = (e) => withBusy(async () => {
-      await api("/api/vpn", {
-        method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name: vpnName, enabled: e.target.checked })
-      });
-    });
-    
-    const slider = document.createElement("span");
-    slider.className = "slider";
-    
-    label.appendChild(cb);
-    label.appendChild(slider);
-    right.appendChild(label);
-    
-    row.appendChild(left);
-    row.appendChild(right);
-    list.appendChild(row);
-  });
-}
 
 // U-7: Hız testi
 $("speedTestBtn").onclick = () => withBusy(async () => {
@@ -1455,8 +1250,8 @@ $("speedTestBtn").onclick = () => withBusy(async () => {
 });
 
 $("restartBtn").onclick = async () => {
-  if (!confirm("Her şey sıfırlansın mı?\n\nİzole oturum, çalışan uygulamalar, relay " +
-               "ve VPN TAMAMEN durdurulacak; ardından uygulama temiz bir durumla " +
+  if (!confirm("Her şey sıfırlansın mı?\n\nİzole oturum ve çalışan uygulamalar " +
+               "TAMAMEN durdurulacak; ardından uygulama temiz bir durumla " +
                "yeniden başlayacak. Panel birkaç saniye içinde kendini yeniden açar.\n\n" +
                "(Oturumu korumak için 'Durdur' yerine 'Çıkış' kullan.)"))
     return;
@@ -1542,8 +1337,6 @@ function filterPalette(query) {
   const commands = [
     { label: "Başlat", action: () => $("startBtn").click(), shortcut: "" },
     { label: "Durdur", action: () => $("stopBtn").click(), shortcut: "" },
-    { label: "Relay aç", action: () => { if (!$("relayToggle").disabled) { $("relayToggle").checked = true; $("relayToggle").dispatchEvent(new Event("change")); } }, shortcut: "" },
-    { label: "Relay kapat", action: () => { if (!$("relayToggle").disabled) { $("relayToggle").checked = false; $("relayToggle").dispatchEvent(new Event("change")); } }, shortcut: "" },
     { label: "Veri tasarrufu aç", action: () => { if (!$("dataSaverToggle").disabled) { $("dataSaverToggle").checked = true; $("dataSaverToggle").dispatchEvent(new Event("change")); } }, shortcut: "" },
     { label: "Veri tasarrufu kapat", action: () => { if (!$("dataSaverToggle").disabled) { $("dataSaverToggle").checked = false; $("dataSaverToggle").dispatchEvent(new Event("change")); } }, shortcut: "" },
     ...MEDIA_LEVELS.map((lvl, i) => ({
@@ -1557,7 +1350,6 @@ function filterPalette(query) {
       shortcut: "",
     })),
     { label: "Yeniden bağlan", action: () => $("reconnectBtn").click(), shortcut: "" },
-    { label: "VPN içe aktar", action: () => { if (!$("addVpnBtn").disabled) $("addVpnBtn").click(); }, shortcut: "" },
     { label: "Hız testi", action: () => $("speedTestBtn").click(), shortcut: "" },
     { label: "Tema değiştir", action: () => $("themeToggle").click(), shortcut: "🌓" },
   ];

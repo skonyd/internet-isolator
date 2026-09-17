@@ -357,11 +357,6 @@ select {
 .checkbox-row em { color: var(--muted); font-style: normal; }
 .hint-sm { font-size: 12px; margin-top: 6px; }
 
-.relay-scope-options { display: flex; flex-direction: column; gap: 6px; margin-top: 6px; }
-.radio-row { display: flex; align-items: flex-start; gap: 10px;
-             font-size: 13.5px; cursor: pointer; }
-.radio-row input { width: 18px; height: 18px; margin-top: 1px; accent-color: var(--accent); flex-shrink: 0; }
-
 /* ---- detay listesi ---- */
 .detail { display: grid; gap: 2px; }
 .detail > div { display: flex; justify-content: space-between; align-items: center;
@@ -373,7 +368,7 @@ select {
 .pill.ok { background: rgba(52,199,89,.15); color: var(--green); }
 .pill.bad { background: rgba(255,59,48,.12); color: var(--red); }
 
-/* ---- relay ---- */
+/* ---- veri tasarrufu kutusu ---- */
 .relay-box { margin-top: 20px; padding-top: 20px; border-top: 1px solid var(--line); }
 .relay-head { display: flex; justify-content: space-between; align-items: center; }
 .switch { position: relative; display: inline-block; width: 51px; height: 31px; }

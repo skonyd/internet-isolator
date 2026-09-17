@@ -50,16 +50,6 @@ class RuntimeState:
     # Dayanıklılık
     reconnect_count: int = 0
     last_reconnect: float = 0.0
-    # Relay
-    relay_active: bool = False
-    relay_scope: str = ""
-    relay_targets: list[str] = field(default_factory=list)
-    # VPN
-    vpn_active: bool = False
-    vpn_name: str = ""
-    vpn_iface: str = ""
-    vpn_ip: str = ""
-    vpns: list[dict] = field(default_factory=list)
     # Uygulamalar
     apps: list[AppProcess] = field(default_factory=list)
     # Olay günlüğü (son N olay)
@@ -86,8 +76,6 @@ class RuntimeState:
     health_gateway: bool = False   # gateway'e ping
     health_dns: bool = False       # DNS çözümü
     health_external: bool = False  # dış IP erişilebilir
-    health_vpn: bool = False       # VPN aktif
-    health_relay: bool = False     # relay hedefleri erişilebilir
 
     def log_event(self, level: str, message: str) -> None:
         self.events.append({"t": time.time(), "level": level, "msg": message})
